@@ -1,5 +1,5 @@
 {
-  "name": "creditcard-manager-client",
+  "name": "card-wallet-client",
   "version": "1.1.0",
   "description": "Vue front‑end for the encrypted credit card manager.",
   "scripts": {
