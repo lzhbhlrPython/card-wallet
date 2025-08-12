@@ -1,4 +1,4 @@
-# Credit Card Manager (Vue + Express + Encrypted SQLite)
+# Card Wallet (Vue + Express + Encrypted SQLite)
 
 一个带本地加密、用户认证与双因素认证 (TOTP) 的信用卡/卡片信息管理示例应用。前端使用 Vue 3 + Vite + Pinia，后端使用 Express + SQLite，并提供基于 WebDAV 的手动远程备份能力。
 
@@ -26,8 +26,8 @@ server/            # 后端 (Express)
 ## 快速开始
 ### 1. 克隆与安装依赖
 ```bash
-git clone <your-repo-url> credit_card_manager
-cd credit_card_manager
+git clone git@github.com:lzhbhlrPython/card-wallet.git card_wallet
+cd card_wallet
 # 安装前端
 cd client && npm install && cd ..
 # 安装后端
