@@ -117,6 +117,54 @@ npm run build
 ```
 将 `client/dist` 部署到任意静态资源服务器（Nginx、CDN、静态托管等）。
 
+## 自动化批量测试 (server_test.py)
+脚本 `server_test.py` 可在根目录批量生成多组织测试卡并调用 `/cards` 创建接口，验证服务端是否正常。
+
+安装依赖（可选，若无 requests 将回退到 urllib）：
+```bash
+pip install requests
+```
+
+使用示例：
+```bash
+# 导出登录后获得的 JWT
+export TOKEN="<你的JWT>"
+# 全量测试所有支持的卡组织
+python server_test.py --base-url http://localhost:3000
+# 仅测试 visa / mastercard / unionpay
+python server_test.py --only visa,mastercard,unionpay
+# 跳过 amex 与 maestro，并输出详细响应
+python server_test.py --skip amex,maestro -v
+# 列出支持的网络
+python server_test.py --list
+# 仅查看将发送的数据（不真正请求）
+python server_test.py --dry-run --only mir,jcb
+# 清空所有卡片
+python server_test.py --purge -v
+# 多轮创建测试
+python server_test.py --only visa,mastercard --rounds 5 -v
+```
+支持的网络：visa, mastercard, unionpay, mir, amex, ecny, tunion, jcb, discover, diners, maestro
+
+注意：
+- eCNY / T-UNION 有效期与 CVV 会被服务端调整为 12/99 与 000（eCNY 固定 000，T-UNION 不展示有效期）。
+- 其它卡组织使用 Luhn 合法随机号；不要用于真实支付测试。
+- 创建后脚本会再次调用 GET /cards 输出最新条目。
+
+参数说明：
+- --token/-t 或环境变量 TOKEN 指定 JWT
+- --base-url/-u 指定服务端地址（默认 http://localhost:3000）
+- --only 仅测试逗号分隔列出的网络
+- --skip 跳过指定网络
+- --dry-run 只打印将发送的 payload
+- --verbose/-v 打印详细响应
+- --list 仅列出支持网络
+- --rounds N  重复执行 N 轮（每轮每种网络 1 张）
+
+UI & 测试更新：
+- 清空所有卡片使用自定义模态（非浏览器 prompt），输入主密码与 2FA 验证码。
+- Mastercard 2-series 检测与生成修复为官方区间 222100–272099。
+
 ## 常见问题 (FAQ)
 Q: 数据库文件在哪？
 A: `server/data/database.sqlite`（首次运行后生成）。

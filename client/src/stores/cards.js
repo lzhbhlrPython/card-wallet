@@ -54,5 +54,15 @@ export const useCardsStore = defineStore('cards', {
         return { ok: false, message: e.response?.data?.message || '加载卡片详情失败' };
       }
     },
+    async purgeAll(masterPassword, totpCode) {
+      try {
+        const response = await api.post('/cards/purge', { masterPassword, totpCode });
+        this.cards = [];
+        localStorage.removeItem('cards');
+        return { ok: true, data: response.data };
+      } catch (e) {
+        return { ok: false, message: e.response?.data?.message || '清空失败' };
+      }
+    }
   },
 });

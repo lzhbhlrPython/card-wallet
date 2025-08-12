@@ -72,8 +72,12 @@ function getCardNetwork(number) {
   if (/^62\d{14,17}$/.test(cleaned)) return 'unionpay';
   // Discover: 6011, 65, 644-649, 622126-622925 (length 16-19)
   if (/^(?:6011\d{12}|65\d{14}|64[4-9]\d{13}|622(?:12[6-9]|1[3-9]\d|[2-8]\d{2}|9(?:0\d|1\d|2[0-5]))\d{10,13})$/.test(cleaned)) return 'discover';
-  // Mastercard: 51-55 (length 16) or 2221-2720 (length 16)
-  if (/^(?:5[1-5]\d{14}|2(2[2-9]\d{12}|[3-6]\d{13}|7[01]\d{12}|720\d{12}))$/.test(cleaned)) return 'mastercard';
+  // Mastercard: 51-55 或 2-series 222100–272099 （均为 16 位）
+  if (cleaned.length === 16) {
+    if (/^5[1-5]\d{14}$/.test(cleaned)) return 'mastercard';
+    const six = Number(cleaned.slice(0,6));
+    if (six >= 222100 && six <= 272099) return 'mastercard';
+  }
   // Maestro: 50, 56-58, 6X (部分范围) (length 12-19). 需在 Discover/UnionPay 之后避免误判。
   if (/^(?:50\d{10,17}|5[6-9]\d{10,17}|6\d{11,18})$/.test(cleaned)) return 'maestro';
   // Visa: 13 / 16 / 19 digits starting with 4
@@ -354,13 +358,23 @@ app.get('/cards/:id', authenticateToken, require2FA, (req, res) => {
   const cardId = req.params.id;
   db.get('SELECT * FROM cards WHERE id = ? AND user_id = ?', [cardId, userId], (err, row) => {
     if (err || !row) return res.status(404).json({ message: 'Card not found' });
+    let number = decrypt(row.encrypted_number);
+    let cvv = decrypt(row.encrypted_cvv);
+    let expiration = decrypt(row.encrypted_expiration);
+    // 强制 eCNY 规则（防止旧数据未被覆盖）
+    if (row.network === 'ecny') {
+      cvv = '000';
+      expiration = '12/99';
+    } else if (row.network === 'tunion') {
+      expiration = '12/99';
+    }
     const card = {
       id: row.id,
       bank: row.bank,
       network: row.network,
-      number: decrypt(row.encrypted_number),
-      cvv: decrypt(row.encrypted_cvv),
-      expiration: decrypt(row.encrypted_expiration),
+      number: number,
+      cvv: cvv,
+      expiration: expiration,
       note: row.note || '',
       created_at: row.created_at,
       updated_at: row.updated_at,
@@ -558,16 +572,6 @@ app.post('/2fa/reset/init', authenticateToken, (req, res) => {
         });
       });
     });
-  });
-});
-
-// 验证新密钥：用户输入基于新 secret 的 TOTP；验证通过后正式替换 totp_secret；保持 twofactor_enabled=1。
-app.post('/2fa/reset/confirm', authenticateToken, (req, res) => {
-  const { code } = req.body;
-  if (!code) return res.status(400).json({ message: 'TOTP code required' });
-  const userId = req.user.id;
-  db.get('SELECT temp_totp_secret, twofactor_enabled FROM users WHERE id = ?', [userId], (err, row) => {
-    if (err || !row) return res.status(500).json({ message: '无法验证' });
     if (!row.twofactor_enabled) return res.status(400).json({ message: '尚未启用 2FA 无需重置' });
     if (!row.temp_totp_secret) return res.status(400).json({ message: '未发起重置或已完成' });
     const verified = speakeasy.totp.verify({ secret: row.temp_totp_secret, encoding: 'base32', token: code });
@@ -575,6 +579,23 @@ app.post('/2fa/reset/confirm', authenticateToken, (req, res) => {
     db.run('UPDATE users SET totp_secret = temp_totp_secret, temp_totp_secret = NULL WHERE id = ?', [userId], err2 => {
       if (err2) return res.status(500).json({ message: '更新密钥失败' });
       res.json({ message: 'TOTP 重置成功' });
+    });
+  });
+});
+
+// Route to purge all cards for the authenticated user. Requires the master password and 2FA verification.
+// This is a destructive action that removes all card records for the user.
+app.post('/cards/purge', authenticateToken, require2FA, (req, res) => {
+  const { masterPassword } = req.body || {};
+  if (!masterPassword) return res.status(400).json({ message: 'masterPassword required' });
+  const userId = req.user.id;
+  db.get('SELECT password_hash FROM users WHERE id = ?', [userId], (err, row) => {
+    if (err || !row) return res.status(500).json({ message: 'Verification failed' });
+    const ok = bcrypt.compareSync(masterPassword, row.password_hash);
+    if (!ok) return res.status(403).json({ message: 'Master password incorrect' });
+    db.run('DELETE FROM cards WHERE user_id = ?', [userId], function (delErr) {
+      if (delErr) return res.status(500).json({ message: 'Purge failed' });
+      res.json({ message: 'All cards purged', deleted: this.changes });
     });
   });
 });

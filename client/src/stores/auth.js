@@ -47,6 +47,7 @@ export const useAuthStore = defineStore('auth', {
     username: localStorage.getItem('username') || '',
     twoFactorEnabled: JSON.parse(localStorage.getItem('twoFactorEnabled') || 'false'),
     setupInfo: null, // 2FA 设置流程中暂存二维码与 otpauth URL
+    deleting: false,
   }),
   actions: {
     // 用户注册
@@ -115,6 +116,22 @@ export const useAuthStore = defineStore('auth', {
         return { ok: true };
       } catch (e) {
         return { ok: false, message: e.response?.data?.message || '2FA 验证失败' };
+      }
+    },
+    // 删除账户
+    async deleteAccount(password, totpCode) {
+      if (this.deleting) return { ok: false, message: '正在处理' };
+      this.deleting = true;
+      try {
+        const headers = { Authorization: `Bearer ${this.token}` };
+        if (totpCode) headers['x-totp'] = totpCode;
+        const resp = await api.post('/account/delete', { password }, { headers });
+        this.logout();
+        return { ok: true, message: resp.data?.message || '删除成功' };
+      } catch (e) {
+        return { ok: false, message: e.response?.data?.message || '删除失败' };
+      } finally {
+        this.deleting = false;
       }
     },
   },
