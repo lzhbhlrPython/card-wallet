@@ -13,7 +13,7 @@
           <router-link to="/fps" class="nav-link">转数快</router-link>
           <router-link to="/backup" class="nav-link">备份</router-link>
           <router-link to="/2fa-reset" class="nav-link">重置TOTP</router-link>
-          <button class="danger-link" @click="showPurge = true">清空所有卡片</button>
+          <button class="danger-link" @click="showPurge = true">清空信息</button>
           <button class="link-button" @click="logout">登出</button>
         </template>
         <template v-else>
@@ -29,8 +29,8 @@
 
     <div v-if="showPurge" class="modal-backdrop" @click.self="closePurge">
       <div class="modal">
-        <h3 class="modal-title">清空所有卡片</h3>
-        <p class="modal-desc">此操作将删除当前账户的全部卡片记录，且不可恢复。请再次确认。</p>
+        <h3 class="modal-title">清空信息</h3>
+        <p class="modal-desc">此操作将删除当前账户的全部卡片与转数快账户记录，且不可恢复。请再次确认。</p>
         <form @submit.prevent="submitPurge" class="form">
           <label class="field">
             <span>主密码</span>
@@ -45,7 +45,6 @@
             <button type="submit" class="btn danger" :disabled="purging">{{ purging ? '执行中...' : '确认清空' }}</button>
           </div>
           <p v-if="purgeError" class="error-text">{{ purgeError }}</p>
-          <p v-if="purgeSuccess" class="success-text">已清空 {{ purgeDeleted }} 条。</p>
         </form>
       </div>
     </div>

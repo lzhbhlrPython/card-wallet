@@ -20,14 +20,8 @@ server_test.py
   --verbose / -v    打印详细响应
   --list            列出可用网络后退出
   --rounds N        重复执行 N 轮（每轮对选定网络各创建 1 张）
-
-依赖：requests (若未安装尝试自动降级使用 urllib)。
-
-注意：脚本仅用于开发联调，不要用于真实生产数据；生成的卡号是测试号并非真实账户。
-
-更新：
-- Mastercard 2 系列按官方范围 222100–272099 生成 (16 位)，不再使用简化/错误前缀。
-- eCNY 直接使用 CVV=000（当前后端未强制覆盖时也保持一致）。
+  --fps             启用 FPS 账户轮巡测试（每轮创建 1 条 FPS 账户）
+  --fps-banks       自定义 FPS 银行逗号分隔列表，优先于接口 /fps/banks
 """
 from __future__ import annotations
 import os, sys, json, random, argparse, time
@@ -42,6 +36,11 @@ RANDOM = random.SystemRandom()
 
 SUPPORTED = [
     'visa','mastercard','unionpay','mir','amex','ecny','tunion','jcb','discover','diners','maestro'
+]
+
+# FPS 内置备用银行列表（接口获取失败时使用）
+FPS_BANK_FALLBACK = [
+    'HSBC', 'HANG SENG', 'STANDARD CHARTERED', 'BOC', 'ICBC', 'CCB', 'BANK OF COMMUNICATIONS', 'CITIBANK', 'DBS', 'BANK OF EAST ASIA', 'CHINA CITIC BANK', 'CHONG HING BANK', 'DAH SING BANK', 'FUBON BANK', 'PUBLIC BANK', 'OCBC WING HANG', 'SHANGHAI COMMERCIAL BANK', 'CMB WING LUNG BANK', 'TAI SANG BANK'
 ]
 
 # ---- Luhn 校验与生成（与服务端算法严格一致） ----
@@ -145,15 +144,14 @@ GEN_MAP: Dict[str, Callable[[], str]] = {
     'diners': gen_diners,
     'maestro': gen_maestro,
 }
-
-# 默认 CVV / Expiration 生成策略
+# 还原默认卡片测试辅助函数
 
 def random_cvv(length=3):
     return ''.join(str(RANDOM.randint(0,9)) for _ in range(length))
 
 def random_expiration():
     mm = RANDOM.randint(1,12)
-    yy = RANDOM.randint(27, 35)  # 2027-2035
+    yy = RANDOM.randint(27,35)
     return f"{mm:02d}/{yy}"
 
 def build_payload(network: str):
@@ -161,7 +159,7 @@ def build_payload(network: str):
     if network == 'amex':
         cvv = random_cvv(4)
     elif network == 'ecny':
-        cvv = '000'  # 与规范保持一致
+        cvv = '000'
     else:
         cvv = random_cvv(3)
     exp = '12/99' if network in ('tunion','ecny') else random_expiration()
@@ -181,7 +179,6 @@ def post_card(session, base_url: str, token: str, payload: dict, verbose=False):
     if requests:
         r = session.post(url, headers=headers, json=payload, timeout=10)
         ok = r.status_code == 200
-        data = None
         try:
             data = r.json()
         except Exception:
@@ -189,7 +186,7 @@ def post_card(session, base_url: str, token: str, payload: dict, verbose=False):
         if verbose or not ok:
             print(f"[{payload['note']}] status={r.status_code} resp={data}")
         return ok, data
-    else:  # fallback urllib
+    else:  # urllib 回退
         import urllib.request, urllib.error
         req = urllib.request.Request(url, method='POST', headers=headers, data=json.dumps(payload).encode())
         try:
@@ -234,6 +231,107 @@ def fetch_cards(session, base_url: str, token: str):
             return e.code, e.read().decode()
         except Exception as e:
             return 0, str(e)
+# ---------------- FPS 测试辅助 ----------------
+
+def random_fps_id():
+    length = RANDOM.randint(8,12)
+    return ''.join(str(RANDOM.randint(0,9)) for _ in range(length))
+
+def build_fps_payload(bank: str):
+    return {
+        'fpsId': random_fps_id(),
+        'recipient': 'TEST USER',
+        'bank': bank,
+        'note': f'Auto test FPS {bank}'
+    }
+
+def fetch_fps_banks(session, base_url: str, token: str, override: str|None, verbose=False):
+    if override:
+        banks = [b.strip() for b in override.split(',') if b.strip()]
+        if banks:
+            return banks
+    url = base_url.rstrip('/') + '/fps/banks'
+    headers = {'Authorization': f'Bearer {token}'}
+    if requests:
+        try:
+            r = session.get(url, headers=headers, timeout=10)
+            if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+                return r.json()
+        except Exception as e:
+            if verbose:
+                print('获取 /fps/banks 失败，使用内置列表: ', e)
+    else:
+        import urllib.request, urllib.error
+        req = urllib.request.Request(url, method='GET', headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode()
+                data = json.loads(body)
+                if isinstance(data, list) and data:
+                    return data
+        except Exception as e:
+            if verbose:
+                print('获取 /fps/banks 失败，使用内置列表: ', e)
+    return FPS_BANK_FALLBACK[:]
+
+def post_fps(session, base_url: str, token: str, payload: dict, verbose=False):
+    url = base_url.rstrip('/') + '/fps'
+    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+    if requests:
+        r = session.post(url, headers=headers, json=payload, timeout=10)
+        ok = r.status_code == 200
+        try:
+            data = r.json()
+        except Exception:
+            data = {'raw': r.text}
+        if verbose or not ok:
+            print(f"[FPS {payload['fpsId']}] status={r.status_code} resp={data}")
+        return ok, data
+    else:
+        import urllib.request, urllib.error
+        req = urllib.request.Request(url, method='POST', headers=headers, data=json.dumps(payload).encode())
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode()
+                try:
+                    data = json.loads(body)
+                except Exception:
+                    data = {'raw': body}
+                ok = resp.status == 200
+                if verbose or not ok:
+                    print(f"[FPS {payload['fpsId']}] status={resp.status} resp={data}")
+                return ok, data
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            print(f"[FPS {payload['fpsId']}] ERROR status={e.code} body={body}")
+            return False, {'error': body}
+        except Exception as e:
+            print(f"[FPS {payload['fpsId']}] ERROR {e}")
+            return False, {'error': str(e)}
+
+def fetch_fps(session, base_url: str, token: str):
+    url = base_url.rstrip('/') + '/fps'
+    headers = {'Authorization': f'Bearer {token}'}
+    if requests:
+        try:
+            r = session.get(url, headers=headers, timeout=10)
+            return r.status_code, r.json()
+        except Exception as e:
+            return 0, {'error': str(e)}
+    else:
+        import urllib.request, urllib.error
+        req = urllib.request.Request(url, method='GET', headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode()
+                try:
+                    return resp.status, json.loads(body)
+                except Exception:
+                    return resp.status, body
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode()
+        except Exception as e:
+            return 0, str(e)
 
 def parse_args():
     p = argparse.ArgumentParser(description='批量测试 /cards 创建接口')
@@ -245,6 +343,8 @@ def parse_args():
     p.add_argument('--verbose','-v', action='store_true')
     p.add_argument('--list', action='store_true', help='列出支持网络后退出')
     p.add_argument('--rounds', type=int, default=1, help='重复轮数')
+    p.add_argument('--fps', action='store_true', help='启用 FPS 账户轮巡测试')
+    p.add_argument('--fps-banks', help='自定义 FPS 银行列表 (逗号分隔)')
     return p.parse_args()
 
 def main():
@@ -269,6 +369,13 @@ def main():
         session = Dummy()
     print(f"开始测试：{targets}，轮数={args.rounds}")
     results = []
+    fps_results = []
+    if args.fps:
+        banks = fetch_fps_banks(session, args.base_url, token, args.fps_banks, verbose=args.verbose)
+        if not banks:
+            print('FPS 银行列表为空，跳过 FPS 测试')
+        else:
+            print(f"FPS 测试启用，将为每轮每个银行各创建 1 条，共 {len(banks)} 条/轮")
     for r in range(1, args.rounds+1):
         print(f"\n== 第 {r} 轮 ==")
         for net in targets:
@@ -279,6 +386,15 @@ def main():
             ok, data = post_card(session, args.base_url, token, payload, verbose=args.verbose)
             results.append((net, ok, data))
             time.sleep(0.05)  # 减少突发
+        if args.fps and banks:
+            for bank in banks:
+                fps_payload = build_fps_payload(bank)
+                if args.dry_run:
+                    print('[DRY][FPS]', fps_payload)
+                else:
+                    ok, data = post_fps(session, args.base_url, token, fps_payload, verbose=args.verbose)
+                    fps_results.append((fps_payload['fpsId'], ok, data, bank))
+                    time.sleep(0.02)
     if not args.dry_run:
         status, cards = fetch_cards(session, args.base_url, token)
         print('\n当前 /cards 列表 (status={}):'.format(status))
@@ -290,6 +406,16 @@ def main():
                 print(' -', c)
         else:
             print(cards)
+    if not args.dry_run and args.fps:
+        status_fps, fps_list = fetch_fps(session, args.base_url, token)
+        print(f"\n当前 /fps 列表 (status={status_fps}):")
+        if isinstance(fps_list, list):
+            show = min(len(fps_list), len(fps_results)) or len(fps_list)
+            print(f"显示最近 {show} 条：")
+            for item in fps_list[-show:]:
+                print(' -', item)
+        else:
+            print(fps_list)
     # 汇总
     success = sum(1 for _, ok, _ in results if ok)
     total = len(results)
@@ -298,6 +424,14 @@ def main():
         for net, ok, data in results:
             if not ok:
                 print(f"失败 {net}: {data}")
+    if args.fps:
+        fps_success = sum(1 for _, ok, _, _ in fps_results if ok)
+        fps_total = len(fps_results)
+        print(f"FPS 创建：成功 {fps_success}/{fps_total}")
+        if fps_success != fps_total and args.verbose:
+            for fid, ok, data, bank in fps_results:
+                if not ok:
+                    print('失败 FPS', fid, bank, data)
     return 0
 
 if __name__ == '__main__':

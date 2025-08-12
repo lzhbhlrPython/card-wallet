@@ -148,15 +148,22 @@ python server_test.py --skip amex,maestro -v
 python server_test.py --list
 # 仅查看将发送的数据（不真正请求）
 python server_test.py --dry-run --only mir,jcb
-# 清空所有卡片
-python server_test.py --purge -v
 # 多轮创建测试
 python server_test.py --only visa,mastercard --rounds 5 -v
+# 同时测试 FPS 账户（每轮为所有银行各创建一个账户）
+python server_test.py --fps -v
+# 指定自定义 FPS 银行子集
+python server_test.py --fps --fps-banks "HSBC,BOC,ICBC"
 ```
 支持的网络：visa, mastercard, unionpay, mir, amex, ecny, tunion, jcb, discover, diners, maestro
 
+新增 FPS 参数：
+- --fps 启用 FPS 账户测试（创建数量 = 轮数 * 银行数）
+- --fps-banks 指定逗号分隔银行（缺省则调用 /fps/banks，失败时用内置列表）
+
 注意：
 - eCNY / T-UNION 有效期与 CVV 会被服务端调整为 12/99 与 000（eCNY 固定 000，T-UNION 不展示有效期）。
+- Purge 功能（清空信息）会同时删除卡片与 FPS 账户。
 - 其它卡组织使用 Luhn 合法随机号；不要用于真实支付测试。
 - 创建后脚本会再次调用 GET /cards 输出最新条目。
 

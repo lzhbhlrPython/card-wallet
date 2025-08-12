@@ -611,9 +611,24 @@ app.post('/cards/purge', authenticateToken, require2FA, (req, res) => {
     if (err || !row) return res.status(500).json({ message: 'Verification failed' });
     const ok = bcrypt.compareSync(masterPassword, row.password_hash);
     if (!ok) return res.status(403).json({ message: 'Master password incorrect' });
-    db.run('DELETE FROM cards WHERE user_id = ?', [userId], function (delErr) {
-      if (delErr) return res.status(500).json({ message: 'Purge failed' });
-      res.json({ message: 'All cards purged', deleted: this.changes });
+    db.serialize(() => {
+      db.run('BEGIN');
+      db.run('DELETE FROM cards WHERE user_id = ?', [userId], function(cardErr) {
+        if (cardErr) {
+          db.run('ROLLBACK');
+          return res.status(500).json({ message: 'Purge cards failed' });
+        }
+        const cardDeleted = this.changes || 0;
+        db.run('DELETE FROM fps_accounts WHERE user_id = ?', [userId], function(fpsErr) {
+          if (fpsErr) {
+            db.run('ROLLBACK');
+            return res.status(500).json({ message: 'Purge FPS accounts failed' });
+          }
+          const fpsDeleted = this.changes || 0;
+          db.run('COMMIT');
+          res.json({ message: 'All information purged', cardsDeleted: cardDeleted, fpsDeleted });
+        });
+      });
     });
   });
 });
