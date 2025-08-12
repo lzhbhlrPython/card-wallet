@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.0] - 2025-08-12
+### Added
+- 初始发布：Vue 3 + Vite 前端（登录、注册、2FA 设置、卡片列表、创建、详情、编辑、删除、备份、退出登录）。
+- Express + SQLite 后端：用户注册/登录、JWT 鉴权、TOTP 双因素认证、卡片 CRUD、字段 AES-256-CBC 对称加密（独立 IV）。
+- 卡组织自动识别：Visa / Mastercard (51–55, 2221–2720) / American Express / Discover / JCB / Maestro / UnionPay / MIR / Diners / T-Union / eCNY / Unknown。
+- Luhn 校验（对特殊网络的豁免处理逻辑预留）。
+- WebDAV 手动备份能力（前端表单 + 时间戳文件名）。
+- 2FA 设置、验证、重置相关端点与页面流程。
+- Python 测试脚本基础版本（批量生成多网络卡片并调用后端 API）。
+- 发布包含 `.gitignore`（忽略数据库与敏感文件）与 GPLv3 LICENSE。 
+
+### Changed
+- README 标题与克隆命令统一为 “Card Wallet”。
+
 ## [1.1.0] - 2025-08-12
 ### Added
 - 后端新增 `POST /cards/purge` 端点：需要主密码 + 2FA（若启用）以清空当前用户全部卡片。
