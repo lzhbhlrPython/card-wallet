@@ -29,5 +29,28 @@
 ### Security
 - 清空端点要求双重验证，降低误操作或滥用风险。
 
-## [Unreleased]
-- 待补充
+## [Unreleased] (开发中 / NOT YET RELEASED)
+### Added
+- FPS (转数快) 账户管理（列表 / 创建 / 详情 / 编辑 / 删除）。
+  - 新表 `fps_accounts`，字段：fps_id / recipient / bank / note / created_at。
+  - `GET /fps` 返回精简列表（不含 note）。
+  - `GET /fps/:id` 需 2FA，返回含 `note` 详情。
+  - `POST /fps` 创建（当前不强制 2FA，与卡片创建策略一致）。
+  - `PUT /fps/:id`、`DELETE /fps/:id` 需 2FA。
+  - `GET /fps/banks` 预置银行列表（已提前路由，避免与 `/:id` 冲突）。
+- 前端 FPS 列表、表单、详情、编辑页（Vue Router 路由：/fps /fps/new /fps/:id /fps/:id/edit）。
+- FPS 备注 note 仅在详情/编辑（2FA 验证后）可见，列表不泄漏敏感信息。 
+
+### Changed
+- FPSList 页面样式重构对齐 CardList（统一按钮、网格、卡片组件视觉）。
+- FPSForm 页面重构对齐 CardForm（容器、字段样式、按钮风格统一）。
+- 修复 `/fps/banks` 被 `/fps/:id` 捕获导致 404 的问题：调整路由顺序。
+- 新增 `POST /fps` 创建端点（此前遗漏）。
+- 统一银行 Logo 命名规则：非字母数字转为下划线并大写，找不到时回退 `fps.png`。
+
+### Security
+- 保持与卡片相同的 2FA 访问策略：敏感字段 (note) 与修改/删除操作均需 2FA。
+
+### Notes
+- 以上功能尚未进入正式发布版本号 (>=1.1.0)，可能继续调整接口与字段。
+- 发布前将进行额外测试与 README 稳定化。

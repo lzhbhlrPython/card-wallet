@@ -12,6 +12,9 @@ const CardForm = () => import('@/pages/CardForm.vue');
 const Backup = () => import('@/pages/Backup.vue');
 const CardDetails = () => import('@/pages/CardDetails.vue');
 const Reset2FA = () => import('@/pages/Reset2FA.vue');
+const FPSList = () => import('@/pages/FPSList.vue');
+const FPSForm = () => import('@/pages/FPSForm.vue');
+const FPSDetail = () => import('@/pages/FPSDetail.vue');
 
 const router = createRouter({
   history: createWebHistory(),
@@ -26,6 +29,10 @@ const router = createRouter({
     { path: '/cards/:id', component: CardDetails, props: true, meta: { requiresAuth: true } },
     { path: '/backup', component: Backup, meta: { requiresAuth: true } },
     { path: '/2fa-reset', component: Reset2FA, meta: { requiresAuth: true } },
+    { path: '/fps', component: FPSList, meta: { requiresAuth: true } },
+    { path: '/fps/new', component: FPSForm, meta: { requiresAuth: true } },
+    { path: '/fps/:id/edit', component: FPSForm, props: true, meta: { requiresAuth: true } },
+    { path: '/fps/:id', component: FPSDetail, props: true, meta: { requiresAuth: true } },
   ],
 });
 

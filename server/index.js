@@ -158,6 +158,24 @@ db.serialize(() => {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`
   );
+  db.run(
+    `CREATE TABLE IF NOT EXISTS fps_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      fps_id TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      bank TEXT NOT NULL,
+      note TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`
+  );
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_fps_user_fpsid ON fps_accounts(user_id, fps_id)');
+  db.all('PRAGMA table_info(fps_accounts)', (err, cols) => {
+    if (!err && cols && !cols.some(c => c.name === 'note')) {
+      db.run('ALTER TABLE fps_accounts ADD COLUMN note TEXT', () => {});
+    }
+  });
   // 兼容旧版本：若无 note 字段则补充
   db.get("PRAGMA table_info(cards)", (e) => {
     if (!e) {
@@ -597,6 +615,83 @@ app.post('/cards/purge', authenticateToken, require2FA, (req, res) => {
       if (delErr) return res.status(500).json({ message: 'Purge failed' });
       res.json({ message: 'All cards purged', deleted: this.changes });
     });
+  });
+});
+
+// 列出当前用户全部 FPS 账户（不含敏感备注 note）
+app.get('/fps', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  db.all('SELECT id, fps_id, recipient, bank, created_at FROM fps_accounts WHERE user_id = ? ORDER BY created_at DESC', [userId], (err, rows) => {
+    if (err) return res.status(500).json({ message: '加载 FPS 账户失败' });
+    res.json(rows);
+  });
+});
+
+// 创建 FPS 账户（不含 note 展示，创建不强制 2FA，与卡片创建策略一致）
+app.post('/fps', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  let { fpsId, recipient, bank, note } = req.body || {};
+  fpsId = String(fpsId || '').trim();
+  recipient = String(recipient || '').trim();
+  bank = String(bank || '').trim().toUpperCase();
+  note = (note ? String(note) : '').trim().slice(0, 500);
+  if (!/^\d{8,12}$/.test(fpsId)) return res.status(400).json({ message: 'FPS ID 必须为 8-12 位数字' });
+  if (!recipient) return res.status(400).json({ message: '收款人必填' });
+  if (!bank) return res.status(400).json({ message: '银行必填' });
+  db.run('INSERT INTO fps_accounts (user_id, fps_id, recipient, bank, note) VALUES (?,?,?,?,?)', [userId, fpsId, recipient, bank, note], function(err){
+    if (err) {
+      if (err.code === 'SQLITE_CONSTRAINT') return res.status(409).json({ message: '该 FPS ID 已存在' });
+      return res.status(500).json({ message: '创建失败' });
+    }
+    res.json({ id: this.lastID });
+  });
+});
+
+// 先定义银行列表路由，避免被 /fps/:id 捕获 (banks 会被视为 id 导致 404)
+const FPS_BANKS = [
+  'HSBC', 'HANG SENG', 'STANDARD CHARTERED', 'BOC', 'ICBC', 'CCB', 'BANK OF COMMUNICATIONS', 'CITIBANK', 'DBS', 'BANK OF EAST ASIA', 'CHINA CITIC BANK', 'CHONG HING BANK', 'DAH SING BANK', 'FUBON BANK', 'PUBLIC BANK', 'OCBC WING HANG', 'SHANGHAI COMMERCIAL BANK', 'CMB WING LUNG BANK', 'TAI SANG BANK'
+];
+app.get('/fps/banks', authenticateToken, (req, res) => {
+  res.json(FPS_BANKS);
+});
+
+// 获取单个 FPS 账户详情（含 note）需要 2FA
+app.get('/fps/:id', authenticateToken, require2FA, (req, res) => {
+  const userId = req.user.id;
+  const id = req.params.id;
+  db.get('SELECT id, fps_id, recipient, bank, note, created_at FROM fps_accounts WHERE id = ? AND user_id = ?', [id, userId], (err, row) => {
+    if (err || !row) return res.status(404).json({ message: '未找到该账户' });
+    res.json(row);
+  });
+});
+// 更新 FPS 账户（recipient / bank / note，可选）需要 2FA；fps_id 不允许修改
+app.put('/fps/:id', authenticateToken, require2FA, (req, res) => {
+  const userId = req.user.id;
+  const id = req.params.id;
+  const { recipient, bank, note } = req.body || {};
+  if (!recipient && !bank && note === undefined) return res.status(400).json({ message: '无可更新字段' });
+  db.get('SELECT id FROM fps_accounts WHERE id = ? AND user_id = ?', [id, userId], (err, row) => {
+    if (err || !row) return res.status(404).json({ message: '未找到该账户' });
+    const sets = [];
+    const params = [];
+    if (recipient) { sets.push('recipient = ?'); params.push(String(recipient).trim().slice(0, 100)); }
+    if (bank) { sets.push('bank = ?'); params.push(String(bank).trim().slice(0, 100)); }
+    if (note !== undefined) { sets.push('note = ?'); params.push(note ? String(note).trim().slice(0, 500) : ''); }
+    if (!sets.length) return res.status(400).json({ message: '无效字段' });
+    params.push(id, userId);
+    db.run(`UPDATE fps_accounts SET ${sets.join(', ')}, created_at = created_at WHERE id = ? AND user_id = ?`, params, function (uErr) {
+      if (uErr) return res.status(500).json({ message: '更新失败' });
+      res.json({ message: '更新成功' });
+    });
+  });
+});
+// 删除 FPS 账户（需要 2FA）
+app.delete('/fps/:id', authenticateToken, require2FA, (req, res) => {
+  const userId = req.user.id;
+  const id = req.params.id;
+  db.run('DELETE FROM fps_accounts WHERE id = ? AND user_id = ?', [id, userId], function (err) {
+    if (err) return res.status(500).json({ message: '删除失败' });
+    res.json({ message: '已删除' });
   });
 });
 

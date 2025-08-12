@@ -10,6 +10,7 @@
         <div class="spacer"></div>
         <template v-if="isAuthenticated">
           <router-link to="/cards" class="nav-link">卡片</router-link>
+          <router-link to="/fps" class="nav-link">转数快</router-link>
           <router-link to="/backup" class="nav-link">备份</router-link>
           <router-link to="/2fa-reset" class="nav-link">重置TOTP</router-link>
           <button class="danger-link" @click="showPurge = true">清空所有卡片</button>

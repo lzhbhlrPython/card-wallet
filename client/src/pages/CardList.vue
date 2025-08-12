@@ -52,25 +52,14 @@
     <div v-else>
       <div v-if="sortedCards.length === 0" class="empty">暂无卡片。</div>
       <div v-else class="cards-grid">
-        <div v-for="card in sortedCards" :key="card.id" class="card-item">
-          <div class="card-top">
-            <p class="network-logo">
-              <img :src="logoUrl(card.network)" :alt="`卡组织 ${card.network}`" class="network-logo" />
-            </p>
-            <span class="bank-name">{{ card.bank || '未知银行' }}</span>
-          </div>
-          <div class="card-middle">
-            <span class="card-number">{{ maskedLast4(card) }}</span>
-          </div>
-          <div class="card-bottom">
-            <span class="expiration" v-if="card.network!=='tunion' && card.network!=='ecny'">有效期 {{ card.expiration }}</span>
-          </div>
-          <div class="actions">
-            <button class="secondary-button" @click="viewDetails(card.id)">详情</button>
-            <router-link :to="`/cards/${card.id}/edit`" class="secondary-button">编辑</router-link>
-            <button class="danger-button" @click="confirmDelete(card.id)">删除</button>
-          </div>
-        </div>
+        <CardItem
+          v-for="card in sortedCards"
+          :key="card.id"
+          :card="card"
+          @view="viewDetails"
+          @edit="goEdit"
+          @delete="confirmDelete"
+        />
       </div>
     </div>
     <!-- 输入 TOTP（用于查看详情 / 删除） -->
@@ -119,6 +108,10 @@ import { ref, onMounted, computed } from 'vue';
 import { useCardsStore } from '@/stores/cards';
 import TwoFactorPrompt from '@/components/TwoFactorPrompt.vue';
 import InlineFilterSelect from '@/components/InlineFilterSelect.vue';
+import CardItem from '@/components/CardItem.vue';
+import { useRouter } from 'vue-router';
+
+const router = useRouter();
 
 const cardsStore = useCardsStore();
 
@@ -199,11 +192,6 @@ async function refreshCards() {
   refreshing.value = false;
 }
 
-// 获取卡组织 LOGO 地址
-function logoUrl(network) {
-  return `http://localhost:3000/logos/${network || 'unknown'}.svg`;
-}
-
 // 触发查看详情，需要 2FA
 function viewDetails(id) {
   promptTitle.value = '查看卡片详情';
@@ -263,19 +251,6 @@ function formatExpiration(exp) {
   return digits.slice(0, 2) + '/' + digits.slice(2);
 }
 
-// 掩码处理，确保显示最后真实的最多四位，不补0不补位
-function maskedLast4(card) {
-  let source = '';
-  if (card.number) {
-    source = String(card.number).replace(/\D/g, '');
-  } else if (card.last4 != null) {
-    // 保留原始（若来自后端为字符串可包含前导 0；若为数字则已无前导 0，不做补齐）
-    source = String(card.last4).replace(/\D/g, '');
-  }
-  const last4 = source ? source.slice(-4) : '';
-  return '•••• ' + last4; // 若不足4位，直接原样显示，不补
-}
-
 const copyMessage = ref('');
 function copy(val, label) {
   if (!val) return;
@@ -288,6 +263,8 @@ function copy(val, label) {
 
 // 移除之前的互相裁剪 watch，避免递归更新；保持简单：用户可以选择任意组合，若组合无交集则结果为空即可。
 // 若以后需要自动裁剪，可实现一个带内容比较的 watch，只在集合真正变化时才赋值。
+
+function goEdit(id) { router.push(`/cards/${id}/edit`); }
 </script>
 
 <style scoped>
@@ -405,70 +382,6 @@ function copy(val, label) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 1rem;
-}
-/* 单个卡片 */
-.card-item {
-  background: #ffffff;
-  border-radius: 12px;
-  padding: 1rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-/* 卡片头部 */
-.card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-}
-.network-logo {
-  height: 24px;
-  object-fit: contain;
-}
-.bank-name {
-  font-weight: 500;
-  font-size: 0.9rem;
-  color: #333;
-}
-/* 中部卡号区域 */
-.card-middle {
-  margin-bottom: 0.5rem;
-  font-size: 1.2rem;
-  letter-spacing: 2px;
-  font-family: 'SF Mono', 'Menlo', monospace;
-}
-/* 底部有效期 */
-.card-bottom {
-  font-size: 0.85rem;
-  color: #666;
-}
-/* 操作按钮区域 */
-.actions {
-  margin-top: 0.5rem;
-  display: flex;
-  justify-content: space-between;
-}
-.secondary-button,
-.danger-button {
-  padding: 0.25rem 0.5rem;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: none;
-  cursor: pointer;
-  font-size: 0.85rem;
-  transition: background-color 0.2s;
-}
-.secondary-button:hover {
-  background-color: #f3f4f6;
-}
-.danger-button {
-  color: #d32f2f;
-  border-color: #d32f2f;
-}
-.danger-button:hover {
-  background-color: #fdecea;
 }
 /* 遮罩层 */
 .overlay {
