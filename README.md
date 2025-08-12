@@ -185,3 +185,6 @@ A: 是。`cards` 表 `user_id` 外键绑定，查询均按用户过滤。
 
 ## 许可证
 [GPL-3.0](LICENSE)
+
+## 共创与 AI 协作
+详见 [AI_CO_CREATION.md](AI_CO_CREATION.md)
