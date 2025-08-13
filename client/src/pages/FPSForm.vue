@@ -91,6 +91,10 @@ async function handlePromptConfirm(code){
   pendingAction.value=null;
 }
 
+function logoFileName(bank){ return bank.toUpperCase().replace(/[^A-Z0-9]+/g,'_').toLowerCase() + '.svg'; }
+// 预留：多级回退逻辑（与列表一致）
+function logoSrcFor(bank){ const base = bank.toUpperCase().replace(/[^A-Z0-9]+/g,'_').toLowerCase(); return { base, svg:`http://localhost:3000/logos/${base}.svg`, png:`http://localhost:3000/logos/${base}.png` }; }
+
 async function onSubmit(){
   error.value=''; success.value='';
   if (isEdit.value) { promptTitle.value='输入 2FA 验证码以更新'; pendingAction.value='update'; showPrompt.value=true; return; }

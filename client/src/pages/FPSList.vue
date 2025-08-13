@@ -33,7 +33,7 @@
         <div v-for="a in sortedAccounts" :key="a.id" class="card-item"><!-- 复用 card-item 外观 -->
           <div class="card-top">
             <p class="network-logo-wrapper">
-              <img :src="bankLogo(a.bank)" :alt="a.bank" class="network-logo" @error="e=> e.target.src = fallbackLogo" />
+              <img :src="bankLogo(a.bank)" :alt="a.bank" class="network-logo" :data-attempt="'svg'" @error="e=>onLogoError(e,a.bank)" />
             </p>
             <span class="bank-name">{{ a.bank }}</span>
           </div>
@@ -74,7 +74,15 @@ const fallbackLogo = 'http://localhost:3000/logos/fps.png';
 async function loadBanks(){ try { const r = await api.get('/fps/banks'); banks.value = r.data; } catch(e){} }
 async function loadAccounts(initial=false){ if(initial) loading.value=true; try { const r = await api.get('/fps'); accounts.value = r.data; } catch(e){} if(initial) loading.value=false; }
 async function refresh(){ refreshing.value=true; await loadAccounts(false); refreshing.value=false; }
-function bankLogo(bank){ const file = bank.toUpperCase().replace(/[^A-Z0-9]+/g,'_') + '.svg'; return `http://localhost:3000/logos/${file}`; }
+function bankLogo(bank){ const base = bank.toUpperCase().replace(/[^A-Z0-9]+/g,'_').toLowerCase(); return `http://localhost:3000/logos/${base}.svg`; }
+function onLogoError(e, bank){
+  const el = e.target;
+  const attempt = el.getAttribute('data-attempt') || 'svg';
+  const base = bank.toUpperCase().replace(/[^A-Z0-9]+/g,'_').toLowerCase();
+  if(attempt==='svg') { el.setAttribute('data-attempt','png'); el.src = `http://localhost:3000/logos/${base}.png`; return; }
+  if(attempt==='png') { el.setAttribute('data-attempt','fallback'); el.src = fallbackLogo; return; }
+  // fallback 已经使用，防止无限循环
+}
 function confirmDelete(id){ deleteId.value=id; showPrompt.value=true; }
 async function handlePromptConfirm(code){ showPrompt.value=false; try { await api.delete(`/fps/${deleteId.value}`, { params:{ totpCode: code } }); await loadAccounts(); } catch(e){ alert(e.response?.data?.message || '删除失败'); } deleteId.value=null; }
 function cancelPrompt(){ showPrompt.value=false; deleteId.value=null; }

@@ -29,32 +29,33 @@
 ### Security
 - 清空端点要求双重验证，降低误操作或滥用风险。
 
-## [Unreleased] (开发中 / NOT YET RELEASED)
+## [1.2.0] - 2025-08-13
 ### Added
-- FPS (转数快) 账户管理（列表 / 创建 / 详情 / 编辑 / 删除）。
-  - 新表 `fps_accounts`，字段：fps_id / recipient / bank / note / created_at。
-  - `GET /fps` 返回精简列表（不含 note）。
-  - `GET /fps/:id` 需 2FA，返回含 `note` 详情。
-  - `POST /fps` 创建（当前不强制 2FA，与卡片创建策略一致）。
-  - `PUT /fps/:id`、`DELETE /fps/:id` 需 2FA。
-  - `GET /fps/banks` 预置银行列表（已提前路由，避免与 `/:id` 冲突）。
-- 前端 FPS 列表、表单、详情、编辑页（Vue Router 路由：/fps /fps/new /fps/:id /fps/:id/edit）。
-- FPS 备注 note 仅在详情/编辑（2FA 验证后）可见，列表不泄漏敏感信息。 
-- Purge 扩展：清空操作现在同时删除 FPS 账户（卡片+FPS 信息）。
-- 测试脚本增加 `--fps` / `--fps-banks`：每轮为所有预设/指定银行各创建一个 FPS 账户。
+- FPS (转数快) 账户管理：列表 / 创建 / 详情 (2FA) / 编辑 / 删除，全量后端 REST 接口与前端页面。
+- 数据库新表 `fps_accounts`；列表不含 note，详情/编辑/删除需 2FA。
+- Purge 扩展：清空操作同时删除 FPS 账户（返回删除计数）。
+- 测试脚本新增 `--fps` / `--fps-banks` 选项：每轮为所有银行各创建 1 条 FPS 账户。
+- 预置银行新增：NANYANG COMMERCIAL BANK。
+- 银行 Logo 多级回退：优先 .svg，失败尝试同名 .png，再失败回退 `fps.png`。
 
 ### Changed
-- FPSList 页面样式重构对齐 CardList（统一按钮、网格、卡片组件视觉）。
-- FPSForm 页面重构对齐 CardForm（容器、字段样式、按钮风格统一）。
-- 修复 `/fps/banks` 被 `/fps/:id` 捕获导致 404 的问题：调整路由顺序。
-- 新增 `POST /fps` 创建端点（此前遗漏）。
-- 统一银行 Logo 命名规则：非字母数字转为下划线并大写，找不到时回退 `fps.png`。
-- Purge 前端文案由“清空所有卡片”改为“清空信息”，提示包含 FPS 账户。
-- 测试脚本 FPS 模式从单银行轮循修改为每轮覆盖全部银行。
+- FPS 列表与表单样式对齐卡片页面；统一按钮与栅格视觉。
+- 修复 `/fps/banks` 被 `/fps/:id` 捕获的路由顺序问题。
+- 新增 `POST /fps` 创建端点（补全 REST）。
+- 银行 Logo 命名统一为：原名大写→非字母数字替下划线→转小写；前端按规则生成。
+- Purge 前端文案改为“清空信息”，提示包含 FPS。
+- 测试脚本 FPS 模式：由单银行轮循改为每轮覆盖全部银行。
+- 增加前端 invalid token 处理：403 + "Invalid token" 或 401 自动登出跳转登录页并携带标记参数。
 
 ### Security
-- 保持与卡片相同的 2FA 访问策略：敏感字段 (note) 与修改/删除操作均需 2FA。
+- 与卡片一致：FPS 详情 / 修改 / 删除 / note 访问均需 2FA。
 
 ### Notes
-- 以上功能尚未进入正式发布版本号 (>=1.1.0)，可能继续调整接口与字段。
-- 发布前将进行额外测试与 README 稳定化。
+- 未来可能新增：占位 bank_fallback.svg、前端 util 抽取 bankLogo、自动校验缺失银行 SVG。
+
+## [Unreleased]
+### Planned / Ideas
+- bank_fallback.svg 通用占位符及构建时缺失校验。
+- FPS 银行列表远程动态同步或缓存过期策略。
+- 前端抽取 bankLogo 到 util 并添加单元测试。
+- 事务性错误模拟测试（Purge 回滚场景、并发一致性）。
