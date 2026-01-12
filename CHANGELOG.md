@@ -53,9 +53,18 @@
 ### Notes
 - 未来可能新增：占位 bank_fallback.svg、前端 util 抽取 bankLogo、自动校验缺失银行 SVG。
 
-## [Unreleased]
+## [1.3.0] - 2026-01-12
+### Added
+- 后端新增 `cards.card_type` 列（枚举字符串），并在 API 层对其进行验证与网络特例强制处理（`tunion` → `transit`，`ecny` → `ecny_wallet_1..4`）。
+- 前端：在卡片创建/编辑表单增加类型选择（中文显示，提交 English enum），`BankSelect` 增加 `readonly`/`allowCreate`/`allowClear` 支持以防止非法输入。
+- 卡片详情保留为列表内弹窗查看（需 2FA）；独立路由 `/cards/:id` 已移除以避免重复入口点。
+- 测试脚本 `server_test.py` 更新：创建测试卡时包含 `cardType` 并兼容特殊网络规则。
+
+### Changed
+- 卡片列表增加“类型”筛选与“按类型”排序，排序使用固定顺序：信用卡 / 借记卡 / 预付卡 / 公交卡 / 一类钱包 / 二类钱包 / 三类钱包 / 四类钱包。
+- `CardItem` 调整展示布局：`类型` 在左侧，`有效期` 在右侧并列，字体权重与颜色统一以便快速识别。
+
+### Notes
+- 数据库兼容性：本次发布引入 `cards.card_type` 字段。服务端会在启动时尝试自动迁移以添加新列，但请务必先备份 `server/data/database.sqlite`。旧客户端（< v1.3.0）可能无法正确处理 `cardType` 字段；请同时升级前端和后端到 v1.3.0 以确保一致性。
+
 ### Planned / Ideas
-- bank_fallback.svg 通用占位符及构建时缺失校验。
-- FPS 银行列表远程动态同步或缓存过期策略。
-- 前端抽取 bankLogo 到 util 并添加单元测试。
-- 事务性错误模拟测试（Purge 回滚场景、并发一致性）。

@@ -22,6 +22,14 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 ## Back-end conventions (server/index.js)
 - Middleware: use `authenticateToken` on protected routes; add `require2FA` on routes that return or mutate secrets (cards detail, update, delete; FPS detail/update/delete; backup; purge).
 - Lists vs details: `GET /cards` returns minimal metadata only (server computes `last4`; never return full number/CVV). Full details via `GET /cards/:id` with 2FA.
+- Card type (`cards.card_type`): stores card attribute as one of `credit` | `debit` | `prepaid`.
+ - Card type (`cards.card_type`): stores card attribute as English enum string.
+  - DB: `cards` table has `card_type TEXT DEFAULT 'credit'` and is added via `PRAGMA table_info` + `ALTER TABLE` migration.
+  - API: list/details responses include `card_type`; create/update accept either `cardType` or `card_type`.
+  - Rules (server-enforced):
+    - T-Union (`network='tunion'`): `card_type` is forced to `transit` (UI shows “公交卡”, input disabled)
+    - eCNY (`network='ecny'`): `card_type` must be one of `ecny_wallet_1|ecny_wallet_2|ecny_wallet_3|ecny_wallet_4` (UI shows “一类/二类/三类/四类钱包”)
+    - Other networks: `card_type` must be one of `credit|debit|prepaid`
 - Card network rules (see `getCardNetwork`):
   - eCNY: number `^0\d{15}$` -> force `cvv=000`, `expiration=12/99`.
   - CHINA T-UNION: `^31\d{17}$` -> force `bank='CHINA T-UNION'`, `expiration=12/99`.
@@ -48,6 +56,21 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 - 2FA reset UI wiring (todo once server confirm exists): page `client/src/pages/Reset2FA.vue` should call
   - `POST /2fa/reset/init { oldCode }` -> show QR and otpauth
   - `POST /2fa/reset/confirm { code }` -> on success keep `twoFactorEnabled=true`, show success and optionally refresh QR preview/state.
+- Card type UI: stored as `card_type` from API but displayed as Chinese labels.
+ - Card type UI: stored as `card_type` from API but displayed as Chinese labels.
+  - Form: `client/src/pages/CardForm.vue` uses `client/src/components/BankSelect.vue` in readonly mode to prevent invalid input.
+    - Normal cards: must choose “信用卡/借记卡/预付卡” -> submit `credit/debit/prepaid`
+    - T-Union: auto “公交卡” -> submit `transit` (input disabled)
+    - eCNY: must choose “一类/二类/三类/四类钱包” -> submit `ecny_wallet_1..4`
+  - List item: `client/src/components/CardItem.vue` shows “类型 信用卡/借记卡/预付卡/公交卡/钱包等级”.
+  - Details: `client/src/pages/CardDetails.vue` and the modal in `client/src/pages/CardList.vue` show “类型 …”.
+  - List filtering and sorting:
+    - `client/src/pages/CardList.vue` exposes a **类型** 多选筛选（展示为中文），筛选项展示顺序固定为：信用卡 / 借记卡 / 预付卡 / 公交卡 / 一类钱包 / 二类钱包 / 三类钱包 / 四类钱包。
+    - `client/src/pages/CardList.vue` 支持按类型排序（`sortOption='type'`），使用上述固定顺序排序结果。
+
+## BankSelect readonly behavior
+- `client/src/components/BankSelect.vue` 支持 props: `readonly`（只读选择）、`allowCreate`（是否允许回车创建新值）、`allowClear`（是否允许清空）。
+- 当 `readonly=true` 时，组件不会基于输入进行过滤，而是展示完整选项列表，防止输入匹配导致无法切换的问题；同时可配合 `allowCreate=false` 禁止用户创建任意值。
 
 ## Logos rule (bank -> asset name)
 - Normalize bank to UPPERCASE, replace non-alnum with `_`, try `/logos/<BANK>.svg`, fallback to `.png`, finally `fps.png`.
@@ -57,7 +80,7 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 ## API usage examples
 - Minimal cards: `api.get('/cards')`
 - Full card details (with 2FA): `api.get('/cards/123', { headers: { 'x-totp': code } })`
-- Create card (no 2FA): `api.post('/cards', { cardNumber, cvv, expiration, bank?, note? })`
+- Create card (no 2FA): `api.post('/cards', { cardNumber, cvv, expiration, bank?, cardType, note? })`
 - FPS banks: `api.get('/fps/banks')`; FPS detail (2FA): `api.get('/fps/1', { headers: { 'x-totp': code } })`
 - Backup (2FA): `api.post('/backup', { url, username, password, subdir })`
 

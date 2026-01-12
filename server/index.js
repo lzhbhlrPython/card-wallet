@@ -151,6 +151,7 @@ db.serialize(() => {
       encrypted_cvv TEXT NOT NULL,
       encrypted_expiration TEXT NOT NULL,
       bank TEXT,
+      card_type TEXT DEFAULT 'credit',
       network TEXT,
       note TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -176,14 +177,14 @@ db.serialize(() => {
       db.run('ALTER TABLE fps_accounts ADD COLUMN note TEXT', () => {});
     }
   });
-  // 兼容旧版本：若无 note 字段则补充
-  db.get("PRAGMA table_info(cards)", (e) => {
-    if (!e) {
-      db.all('PRAGMA table_info(cards)', (err2, cols) => {
-        if (!err2 && cols && !cols.some(c => c.name === 'note')) {
-          db.run('ALTER TABLE cards ADD COLUMN note TEXT', ()=>{});
-        }
-      });
+  // 兼容旧版本：cards 表字段补齐
+  db.all('PRAGMA table_info(cards)', (err2, cols) => {
+    if (err2 || !cols) return;
+    if (!cols.some(c => c.name === 'note')) {
+      db.run('ALTER TABLE cards ADD COLUMN note TEXT', () => {});
+    }
+    if (!cols.some(c => c.name === 'card_type')) {
+      db.run("ALTER TABLE cards ADD COLUMN card_type TEXT DEFAULT 'credit'", () => {});
     }
   });
 });
@@ -254,6 +255,7 @@ function mapCardRow(row) {
   return {
     id: row.id,
     bank: row.bank,
+    card_type: row.card_type || 'credit',
     network: row.network,
     last4,
     // 交通联合与 eCNY 列表不展示有效期
@@ -262,6 +264,30 @@ function mapCardRow(row) {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+function normalizeCardType(input) {
+  if (input == null || input === '') return null;
+  const v = String(input).toLowerCase();
+  if (v === 'credit' || v === 'debit' || v === 'prepaid') return v;
+  if (v === 'transit') return v;
+  if (v === 'ecny_wallet_1' || v === 'ecny_wallet_2' || v === 'ecny_wallet_3' || v === 'ecny_wallet_4') return v;
+  return null;
+}
+
+function isCardTypeValidForNetwork(network, cardType) {
+  if (!cardType) return false;
+  if (network === 'tunion') return cardType === 'transit';
+  if (network === 'ecny') return ['ecny_wallet_1','ecny_wallet_2','ecny_wallet_3','ecny_wallet_4'].includes(cardType);
+  return ['credit','debit','prepaid'].includes(cardType);
+}
+
+function deriveCardTypeForNetwork(network, inputCardType) {
+  if (network === 'tunion') return { ok: true, value: 'transit' };
+  const normalized = normalizeCardType(inputCardType);
+  if (!normalized) return { ok: false, message: 'cardType required' };
+  if (!isCardTypeValidForNetwork(network, normalized)) return { ok: false, message: 'Invalid cardType for network' };
+  return { ok: true, value: normalized };
 }
 
 // Registration endpoint.  Creates a new user with a unique
@@ -389,6 +415,7 @@ app.get('/cards/:id', authenticateToken, require2FA, (req, res) => {
     const card = {
       id: row.id,
       bank: row.bank,
+      card_type: row.card_type || 'credit',
       network: row.network,
       number: number,
       cvv: cvv,
@@ -408,13 +435,20 @@ app.get('/cards/:id', authenticateToken, require2FA, (req, res) => {
 // onboarding easier but this can be adjusted.
 app.post('/cards', authenticateToken, (req, res) => {
   const userId = req.user.id;
-  let { cardNumber, cvv, expiration, bank, note } = req.body;
+  let { cardNumber, cvv, expiration, bank, note, cardType, card_type } = req.body;
   if (!cardNumber || !cvv || !expiration) {
     return res.status(400).json({ message: 'cardNumber, cvv and expiration are required' });
   }
   const v = validateServerCardNumber(cardNumber);
   if (!v.ok) return res.status(400).json({ message: v.message });
   const network = v.network;
+  const cardTypeResult = deriveCardTypeForNetwork(network, cardType ?? card_type);
+  if (!cardTypeResult.ok) {
+    // 针对 eCNY 给出更明确提示
+    if (network === 'ecny') return res.status(400).json({ message: 'eCNY cardType required (ecny_wallet_1..4)' });
+    if (network === 'tunion') return res.status(400).json({ message: 'Invalid cardType' });
+    return res.status(400).json({ message: 'cardType required (credit/debit/prepaid)' });
+  }
   bank = bank || '';
   note = (note || '').slice(0, 1000);
   if (network === 'tunion') {
@@ -428,8 +462,8 @@ app.post('/cards', authenticateToken, (req, res) => {
   const encCvv = encrypt(cvv);
   const encExp = encrypt(expiration);
   db.run(
-    `INSERT INTO cards (user_id, encrypted_number, encrypted_cvv, encrypted_expiration, bank, network, note) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [userId, encNum, encCvv, encExp, bank, network, note],
+    `INSERT INTO cards (user_id, encrypted_number, encrypted_cvv, encrypted_expiration, bank, card_type, network, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [userId, encNum, encCvv, encExp, bank, cardTypeResult.value, network, note],
     function (err) {
       if (err) return res.status(500).json({ message: 'Failed to create card' });
       res.json({ id: this.lastID, network });
@@ -501,6 +535,37 @@ app.put('/cards/:id', authenticateToken, require2FA, (req, res) => {
     if (req.body.note !== undefined) {
       updates.push('note = ?');
       params.push(String(req.body.note).slice(0, 1000));
+    }
+    // card_type 更新：需要与最终 network 一致
+    const hasIncomingCardType = (req.body.cardType !== undefined || req.body.card_type !== undefined);
+    const incomingNormalizedCardType = hasIncomingCardType ? normalizeCardType(req.body.cardType ?? req.body.card_type) : null;
+    if (hasIncomingCardType && !incomingNormalizedCardType) {
+      return res.status(400).json({ message: 'Invalid cardType' });
+    }
+
+    // 计算最终 network（若本次更新 cardNumber 会改 network）
+    const pendingNetworkIndex = updates.findIndex(u => u === 'network = ?');
+    const pendingNetwork = pendingNetworkIndex !== -1 ? params[pendingNetworkIndex + 1] : null;
+    const effectiveNetwork = pendingNetwork || row.network;
+
+    if (effectiveNetwork === 'tunion') {
+      // 强制公交卡
+      updates.push('card_type = ?');
+      params.push('transit');
+    } else {
+      if (hasIncomingCardType) {
+        if (!isCardTypeValidForNetwork(effectiveNetwork, incomingNormalizedCardType)) {
+          return res.status(400).json({ message: 'Invalid cardType for network' });
+        }
+        updates.push('card_type = ?');
+        params.push(incomingNormalizedCardType);
+      } else {
+        // 未提供 cardType，但如果原值与新 network 不匹配则要求显式提供
+        const currentCardType = row.card_type || 'credit';
+        if (!isCardTypeValidForNetwork(effectiveNetwork, currentCardType)) {
+          return res.status(400).json({ message: 'cardType required for network change' });
+        }
+      }
     }
     if (updates.length === 0) return res.status(400).json({ message: 'No valid fields to update' });
     params.push(cardId, userId);

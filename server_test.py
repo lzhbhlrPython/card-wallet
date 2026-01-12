@@ -165,11 +165,19 @@ def build_payload(network: str):
     exp = '12/99' if network in ('tunion','ecny') else random_expiration()
     bank = '' if network in ('tunion',) else f"Test Bank {network.upper()}"
     note = f"Auto test {network}"
+    # cardType: must be English enum value
+    if network == 'tunion':
+        card_type = 'transit'
+    elif network == 'ecny':
+        card_type = RANDOM.choice(['ecny_wallet_1','ecny_wallet_2','ecny_wallet_3','ecny_wallet_4'])
+    else:
+        card_type = RANDOM.choice(['credit','debit','prepaid'])
     return {
         'cardNumber': number,
         'cvv': cvv,
         'expiration': exp,
         'bank': bank,
+        'cardType': card_type,
         'note': note
     }
 

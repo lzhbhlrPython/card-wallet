@@ -19,6 +19,33 @@
 
 ## 目录结构
 ```
+
+## 最近更新（已发布 v1.3.0）
+
+以下为 v1.3.0 中实现的重要变更，包含数据库迁移、后端验证与前端 UX 改进：
+
+- 后端：新增 `cards.card_type` 字段（English enum），可能值：`credit | debit | prepaid | transit | ecny_wallet_1..4`。
+  - 通过数据库迁移（PRAGMA table_info -> ALTER TABLE）自动添加列以兼容旧数据库。
+  - API 在创建/更新时校验并强制网络特殊规则：
+    - `tunion` (CHINA T-UNION) 强制 `card_type='transit'`，并对有效期/显示做特殊处理。
+    - `ecny` (eCNY) 必须使用 `ecny_wallet_1..4` 之一；服务端会把 CVV/有效期调整为 000 / 12/99（按规则展示）。
+  - 列表接口 `/cards` 仍然只返回非敏感元数据（服务器计算 `last4`）；卡片详情现在通过列表内弹窗查看（需 2FA），不再提供独立的 `/cards/:id` 路由。
+
+- 前端：显示与交互改进
+  - 在卡片创建/编辑表单增加“类型”字段（使用统一 `BankSelect` 风格控件），UI 展示为中文标签（信用卡/借记卡/预付卡/公交卡/一类..四类钱包），但提交给服务端为 English enum（`cardType` 字段）。
+  - `BankSelect` 增加 `readonly` / `allowCreate` / `allowClear` 属性：当 `readonly` 为真时，组件不会基于输入进行过滤，且可通过 `allowCreate=false` 禁止用户创建任意值（用于卡类型选择以避免非法输入）。
+  - 卡片列表增加“类型”筛选与“按类型”排序，排序使用固定顺序：信用卡 / 借记卡 / 预付卡 / 公交卡 / 一类钱包 / 二类钱包 / 三类钱包 / 四类钱包。
+  - 卡片项(`CardItem`)将 `类型` 放在左侧，`有效期` 放在右侧并列展示，字体权重与颜色统一以便快速识别。
+  - 卡片详情通过列表内弹窗查看（需 2FA）；独立路由 `/cards/:id` 已移除以避免重复入口点。列表中的“详情”按钮会打开弹窗；删除操作仍使用 2FA 弹窗确认。
+
+- 测试与文档
+  - `server_test.py` 已更新以在创建测试卡时包含 `cardType` 字段并覆盖特殊网络规则。
+  - `.github/copilot-instructions.md` 已同步更新，包含后端约束与前端表单/显示规则说明。
+
+ 数据库兼容性注意：
+ - 本次发布新增 `cards.card_type` 字段（枚举），服务端在启动时会尝试通过迁移（`PRAGMA table_info` + `ALTER TABLE`）自动添加该列，但建议在升级前先备份 `server/data/database.sqlite` 以防万一。
+ - 如果你使用旧版本客户端（< v1.3.0），可能无法正确显示或提交 `cardType` 字段；请同时更新前端到 v1.3.0 以确保兼容性。
+ - 若需回退或审计迁移，请先备份数据库，再参阅 `server/index.js` 中的迁移逻辑与变更记录。
 assets/            # 通用静态资源（卡组织 svg 等）
 client/            # 前端 (Vue 3 + Vite)
   src/
