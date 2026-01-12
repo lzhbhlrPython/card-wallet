@@ -172,13 +172,16 @@ def build_payload(network: str):
         card_type = RANDOM.choice(['ecny_wallet_1','ecny_wallet_2','ecny_wallet_3','ecny_wallet_4'])
     else:
         card_type = RANDOM.choice(['credit','debit','prepaid'])
+    # 随机 cardholder（用于测试新字段）
+    names = ['ZHANG SAN','LI SI','WANG WU','TEST USER','ALICE','BOB','CHARLIE','DAVID']
     return {
         'cardNumber': number,
         'cvv': cvv,
         'expiration': exp,
         'bank': bank,
         'cardType': card_type,
-        'note': note
+        'note': note,
+        'cardholder': RANDOM.choice(names)
     }
 
 def post_card(session, base_url: str, token: str, payload: dict, verbose=False):

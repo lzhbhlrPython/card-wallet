@@ -9,6 +9,7 @@
 - 可选 TOTP 双因素认证（Speakeasy + 二维码）
 - 卡号 / CVV / 有效期基于 AES-256-CBC 加密后存入 SQLite
 - 自动识别多种卡组织 (Visa / Mastercard / Amex / UnionPay / Discover / JCB / Diners / Maestro / MIR / CHINA T-UNION / eCNY / 其它)
+- 卡片支持记录持卡人姓名（加密存储，仅详情可见）。
 - 服务端校验卡号（含 Luhn 校验，特例：T-Union / eCNY）
 - 列表仅展示末四位与必要元数据，详情接口需二次 2FA 验证
 - 支持备注 note 字段
@@ -34,6 +35,7 @@
   - 卡片列表增加“类型”筛选与“按类型”排序，排序使用固定顺序：信用卡 / 借记卡 / 预付卡 / 公交卡 / 一类钱包 / 二类钱包 / 三类钱包 / 四类钱包。
   - 卡片项(`CardItem`)将 `类型` 放在左侧，`有效期` 放在右侧并列展示，字体权重与颜色统一以便快速识别。
   - 卡片详情通过列表内弹窗查看（需 2FA）；独立路由 `/cards/:id` 已移除以避免重复入口点。列表中的“详情”按钮会打开弹窗；删除操作仍使用 2FA 弹窗确认。
+    - 卡片详情弹窗已升级为更拟真的卡面视觉：基于卡片信息生成确定性渐变配色（近似流体/柏林噪声效果），并在详情中展示持卡人姓名（仅在详情可见）。
 
 - 测试与文档
   - `server_test.py` 已更新以在创建测试卡时包含 `cardType` 字段并覆盖特殊网络规则。
@@ -131,8 +133,9 @@ npm run dev
 - 未识别模式：允许 1-80 位纯数字（更自由的自定义/虚拟卡）
 
 ## 二因素认证重置流程
-1. 用户提供旧验证码调用 POST /2fa/reset/init -> 生成临时新 secret (temp_totp_secret) 与二维码
-2. 用户使用新秘钥生成验证码调用 POST /2fa/reset/confirm -> 替换正式 totp_secret
+重置 TOTP 时，客户端只需验证账号密码：
+1. 调用 `POST /2fa/reset/init { password }`（需登录并在 Authorization header 中携带 JWT），服务端验证账号密码后生成新的 TOTP 秘钥并立即绑定（`totp_secret`），返回 `{ otpauth_url, qrCode }` 供用户导入到身份验证器。
+2. 用户使用新身份验证器生成的验证码登录即可（无需旧验证码）。
 
 ## 备份接口使用示例
 ```bash

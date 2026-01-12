@@ -150,6 +150,7 @@ db.serialize(() => {
       encrypted_number TEXT NOT NULL,
       encrypted_cvv TEXT NOT NULL,
       encrypted_expiration TEXT NOT NULL,
+      encrypted_cardholder TEXT,
       bank TEXT,
       card_type TEXT DEFAULT 'credit',
       network TEXT,
@@ -185,6 +186,9 @@ db.serialize(() => {
     }
     if (!cols.some(c => c.name === 'card_type')) {
       db.run("ALTER TABLE cards ADD COLUMN card_type TEXT DEFAULT 'credit'", () => {});
+    }
+    if (!cols.some(c => c.name === 'encrypted_cardholder')) {
+      db.run('ALTER TABLE cards ADD COLUMN encrypted_cardholder TEXT', () => {});
     }
   });
 });
@@ -405,6 +409,12 @@ app.get('/cards/:id', authenticateToken, require2FA, (req, res) => {
     let number = decrypt(row.encrypted_number);
     let cvv = decrypt(row.encrypted_cvv);
     let expiration = decrypt(row.encrypted_expiration);
+    let cardholder = null;
+    try {
+      if (row.encrypted_cardholder) cardholder = decrypt(row.encrypted_cardholder);
+    } catch (e) {
+      cardholder = null;
+    }
     // 强制 eCNY 规则（防止旧数据未被覆盖）
     if (row.network === 'ecny') {
       cvv = '000';
@@ -420,6 +430,7 @@ app.get('/cards/:id', authenticateToken, require2FA, (req, res) => {
       number: number,
       cvv: cvv,
       expiration: expiration,
+      cardholder: cardholder,
       note: row.note || '',
       created_at: row.created_at,
       updated_at: row.updated_at,
@@ -435,7 +446,7 @@ app.get('/cards/:id', authenticateToken, require2FA, (req, res) => {
 // onboarding easier but this can be adjusted.
 app.post('/cards', authenticateToken, (req, res) => {
   const userId = req.user.id;
-  let { cardNumber, cvv, expiration, bank, note, cardType, card_type } = req.body;
+  let { cardNumber, cvv, expiration, bank, note, cardType, card_type, cardholder } = req.body;
   if (!cardNumber || !cvv || !expiration) {
     return res.status(400).json({ message: 'cardNumber, cvv and expiration are required' });
   }
@@ -461,9 +472,10 @@ app.post('/cards', authenticateToken, (req, res) => {
   const encNum = encrypt(cardNumber);
   const encCvv = encrypt(cvv);
   const encExp = encrypt(expiration);
+  const encCardholder = cardholder ? encrypt(String(cardholder)) : null;
   db.run(
-    `INSERT INTO cards (user_id, encrypted_number, encrypted_cvv, encrypted_expiration, bank, card_type, network, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [userId, encNum, encCvv, encExp, bank, cardTypeResult.value, network, note],
+    `INSERT INTO cards (user_id, encrypted_number, encrypted_cvv, encrypted_expiration, encrypted_cardholder, bank, card_type, network, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [userId, encNum, encCvv, encExp, encCardholder, bank, cardTypeResult.value, network, note],
     function (err) {
       if (err) return res.status(500).json({ message: 'Failed to create card' });
       res.json({ id: this.lastID, network });
@@ -531,6 +543,10 @@ app.put('/cards/:id', authenticateToken, require2FA, (req, res) => {
       } else {
         updates.push('bank = ?'); params.push(req.body.bank);
       }
+    }
+    if (req.body.cardholder !== undefined) {
+      updates.push('encrypted_cardholder = ?');
+      params.push(req.body.cardholder ? encrypt(String(req.body.cardholder)) : null);
     }
     if (req.body.note !== undefined) {
       updates.push('note = ?');
@@ -638,30 +654,23 @@ app.post('/backup', authenticateToken, require2FA, async (req, res) => {
 // 重新生成一个新的 TOTP 秘钥（需要已登录并已启用 2FA，防止绕过）。返回新的 otpauth URL 与临时二维码，但不立即生效，直到用户验证。
 app.post('/2fa/reset/init', authenticateToken, (req, res) => {
   const userId = req.user.id;
-  const { oldCode } = req.body || {};
-  db.get('SELECT twofactor_enabled, totp_secret FROM users WHERE id = ?', [userId], (err, row) => {
-    if (err || !row) return res.status(500).json({ message: '无法查询用户状态' });
-    if (!row.twofactor_enabled) return res.status(400).json({ message: '尚未启用 2FA 无需重置' });
-    if (!oldCode) return res.status(400).json({ message: '旧验证码必填' });
-    const verifiedOld = speakeasy.totp.verify({ secret: row.totp_secret, encoding: 'base32', token: oldCode });
-    if (!verifiedOld) return res.status(400).json({ message: '旧验证码不正确' });
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ message: 'Password required' });
+  db.get('SELECT password_hash FROM users WHERE id = ?', [userId], (err, row) => {
+    if (err || !row) return res.status(500).json({ message: 'Unable to query user' });
+    const ok = bcrypt.compareSync(password, row.password_hash);
+    if (!ok) return res.status(403).json({ message: 'Password incorrect' });
+    // Generate and immediately bind new TOTP secret. This replaces the old
+    // secret and enables 2FA for the account. The client receives the
+    // otpauth URL and QR code so the user can add the new key to their
+    // authenticator app.
     const secret = speakeasy.generateSecret({ length: 20, name: `CardManager (${req.user.username})` });
-    db.run('ALTER TABLE users ADD COLUMN temp_totp_secret TEXT', () => {
-      db.run('UPDATE users SET temp_totp_secret = ? WHERE id = ?', [secret.base32, userId], err2 => {
-        if (err2) return res.status(500).json({ message: '存储新密钥失败' });
-        QRCode.toDataURL(secret.otpauth_url, (err3, dataURL) => {
-          if (err3) return res.status(500).json({ message: '生成二维码失败' });
-          res.json({ otpauth_url: secret.otpauth_url, qrCode: dataURL });
-        });
+    db.run('UPDATE users SET totp_secret = ?, twofactor_enabled = 1 WHERE id = ?', [secret.base32, userId], (uErr) => {
+      if (uErr) return res.status(500).json({ message: 'Failed to store new TOTP secret' });
+      QRCode.toDataURL(secret.otpauth_url, (err3, dataURL) => {
+        if (err3) return res.status(500).json({ message: 'Failed to generate QR code' });
+        res.json({ otpauth_url: secret.otpauth_url, qrCode: dataURL });
       });
-    });
-    if (!row.twofactor_enabled) return res.status(400).json({ message: '尚未启用 2FA 无需重置' });
-    if (!row.temp_totp_secret) return res.status(400).json({ message: '未发起重置或已完成' });
-    const verified = speakeasy.totp.verify({ secret: row.temp_totp_secret, encoding: 'base32', token: code });
-    if (!verified) return res.status(400).json({ message: 'Invalid TOTP code' });
-    db.run('UPDATE users SET totp_secret = temp_totp_secret, temp_totp_secret = NULL WHERE id = ?', [userId], err2 => {
-      if (err2) return res.status(500).json({ message: '更新密钥失败' });
-      res.json({ message: 'TOTP 重置成功' });
     });
   });
 });

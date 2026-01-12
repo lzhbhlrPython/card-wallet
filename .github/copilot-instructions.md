@@ -22,6 +22,7 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 ## Back-end conventions (server/index.js)
 - Middleware: use `authenticateToken` on protected routes; add `require2FA` on routes that return or mutate secrets (cards detail, update, delete; FPS detail/update/delete; backup; purge).
 - Lists vs details: `GET /cards` returns minimal metadata only (server computes `last4`; never return full number/CVV). Full details via `GET /cards/:id` with 2FA.
+ - New sensitive field: `cards.encrypted_cardholder` (encrypted). `cardholder` is only returned by the detail endpoint (requires 2FA).
 - Card type (`cards.card_type`): stores card attribute as one of `credit` | `debit` | `prepaid`.
  - Card type (`cards.card_type`): stores card attribute as English enum string.
   - DB: `cards` table has `card_type TEXT DEFAULT 'credit'` and is added via `PRAGMA table_info` + `ALTER TABLE` migration.
@@ -41,21 +42,12 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 
 ## 2FA setup and reset
 - Setup: `GET /2fa/setup` -> { otpauth_url, qrCode }, then `POST /2fa/verify { code }` flips `twofactor_enabled=1`.
-- Reset (current state): README mentions `/2fa/reset/confirm`, server has only `/2fa/reset/init` and contains dead/inline confirm logic inside the init handler (not reachable). Implement/repair confirm flow before wiring UI that depends on it.
-- Implement `/2fa/reset/confirm` (todo for agents):
-  1) Add column `temp_totp_secret` to `users` if missing (follow existing conditional migration pattern).
-  2) Route: `POST /2fa/reset/confirm` with body `{ code }`, guarded by `authenticateToken`.
-  3) Checks: user has `twofactor_enabled=1` and `temp_totp_secret` present; verify TOTP against `temp_totp_secret`.
-  4) On success: `UPDATE users SET totp_secret = temp_totp_secret, temp_totp_secret = NULL` and return success.
-  5) Do not require 2FA code from the old secret here (it was already validated in `/2fa/reset/init { oldCode }`).
-  6) Remove dead confirm code from `/2fa/reset/init` to avoid confusion.
+- Reset: `POST /2fa/reset/init { password }` -> verifies account password, generates a new TOTP secret, immediately binds it to the user (sets `totp_secret` and `twofactor_enabled = 1`) and returns `{ otpauth_url, qrCode }` so the user can scan/import into an authenticator app. No old TOTP is required and no separate confirm endpoint is needed.
 
 ## Front-end patterns
 - Axios: use the exported `api` from `client/src/stores/auth.js`; it persists token to localStorage and sets default Authorization header. 401/invalid token triggers auto-logout and redirect via response interceptor.
 - Router guard (`client/src/router/index.js`): all routes except `/login`, `/register` require auth; when `!twoFactorEnabled`, redirect to `/setup-2fa`.
-- 2FA reset UI wiring (todo once server confirm exists): page `client/src/pages/Reset2FA.vue` should call
-  - `POST /2fa/reset/init { oldCode }` -> show QR and otpauth
-  - `POST /2fa/reset/confirm { code }` -> on success keep `twoFactorEnabled=true`, show success and optionally refresh QR preview/state.
+- 2FA reset UI wiring: page `client/src/pages/Reset2FA.vue` should call `POST /2fa/reset/init { password }` to generate and bind a new TOTP secret and then display the returned `otpauth_url` / `qrCode` for the user to import.
 - Card type UI: stored as `card_type` from API but displayed as Chinese labels.
  - Card type UI: stored as `card_type` from API but displayed as Chinese labels.
   - Form: `client/src/pages/CardForm.vue` uses `client/src/components/BankSelect.vue` in readonly mode to prevent invalid input.
@@ -81,6 +73,7 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 - Minimal cards: `api.get('/cards')`
 - Full card details (with 2FA): `api.get('/cards/123', { headers: { 'x-totp': code } })`
 - Create card (no 2FA): `api.post('/cards', { cardNumber, cvv, expiration, bank?, cardType, note? })`
+- Create card (no 2FA): `api.post('/cards', { cardNumber, cvv, expiration, bank?, cardType, note?, cardholder? })` — `cardholder` 为敏感字段（详情需 2FA）。
 - FPS banks: `api.get('/fps/banks')`; FPS detail (2FA): `api.get('/fps/1', { headers: { 'x-totp': code } })`
 - Backup (2FA): `api.post('/backup', { url, username, password, subdir })`
 
@@ -89,5 +82,5 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 
 ## Pitfalls to respect
 - Client API baseURL is hardcoded in `client/src/stores/auth.js`; update if server port/origin changes.
-- Implement `/2fa/reset/confirm` before building UI flows that depend on it.
+ 
 - Keep list endpoints free of full secrets; compute `last4` server-side. Ensure new sensitive endpoints always use `authenticateToken` + `require2FA`.

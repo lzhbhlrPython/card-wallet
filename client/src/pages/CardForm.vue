@@ -61,6 +61,10 @@
         <label for="note">备注</label>
         <textarea id="note" v-model="note" rows="3" placeholder="可选：例如用途、限额、渠道限制等 (最多1000字)" maxlength="1000" />
       </div>
+      <div class="field">
+        <label for="cardholder">持卡人</label>
+        <input id="cardholder" v-model="cardholder" type="text" placeholder="持卡人姓名（可选，仅详情可见）" />
+      </div>
       <div class="actions">
         <button type="submit" class="primary-button">{{ isEdit ? '更新' : '添加' }}</button>
         <router-link to="/cards" class="secondary-button">取消</router-link>
@@ -98,6 +102,7 @@ const bank = ref('');
 const cardType = ref('');
 const cardTypeText = ref('');
 const note = ref('');
+const cardholder = ref('');
 const error = ref('');
 const warning = ref(''); // 黄色提示（非阻断）
 
@@ -210,7 +215,8 @@ async function handlePromptConfirm(code) {
       bank.value = data.bank;
       cardType.value = data.card_type || data.cardType || '';
       cardTypeText.value = cardTypeToText(cardType.value);
-      note.value = data.note || '';
+        note.value = data.note || '';
+        cardholder.value = data.cardholder || '';
     } else {
       error.value = res.message;
     }
@@ -218,7 +224,7 @@ async function handlePromptConfirm(code) {
     const expNorm = normalizeExpiration(expiration.value);
     const res = await cardsStore.updateCard(
       cardId,
-      { cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, cardType: cardType.value, note: note.value },
+      { cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, cardType: cardType.value, note: note.value, cardholder: cardholder.value },
       code
     );
     if (res.ok) {
@@ -396,7 +402,7 @@ async function onSubmit(){
     promptTitle.value='输入验证码以更新卡片'; pendingAction.value='update'; showPrompt.value=true;
   } else {
     const expNorm = normalizeExpiration(expiration.value);
-    const res = await cardsStore.addCard({ cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, cardType: cardType.value, note: note.value });
+    const res = await cardsStore.addCard({ cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, cardType: cardType.value, note: note.value, cardholder: cardholder.value });
     if(res.ok) router.push('/cards'); else error.value=res.message;
   }
 }

@@ -5,8 +5,8 @@
       <p>此操作将生成新的 TOTP 秘钥，需要用新二维码在身份验证器中重新添加账号。</p>
       <p class="warn">重置后旧的验证码将全部失效，请确保可以立即访问新秘钥。</p>
       <div class="field">
-        <label for="oldCode">输入当前(旧)验证码</label>
-        <input id="oldCode" v-model="oldCode" type="text" placeholder="6 位旧 TOTP" />
+        <label for="password">请输入账号密码以确认重绑</label>
+        <input id="password" v-model="password" type="password" placeholder="账号密码" />
       </div>
       <button class="primary-button" @click="initReset" :disabled="loading">{{ loading ? '处理中...' : '生成新密钥' }}</button>
       <p v-if="error" class="error">{{ error }}</p>
@@ -15,18 +15,14 @@
       <p>请使用身份验证器扫描下方二维码或手动导入。</p>
       <div v-if="qrCode" class="qr"><img :src="qrCode" alt="QR" /></div>
       <p class="mono" v-if="otpauthUrl">{{ otpauthUrl }}</p>
-      <div class="field">
-        <label for="code">输入新验证码</label>
-        <input id="code" v-model="code" type="text" placeholder="6 位 TOTP" />
-      </div>
       <div class="actions">
-        <button class="primary-button" @click="confirmReset" :disabled="loading">确认重置</button>
+        <button class="primary-button" @click="finish" :disabled="loading">完成</button>
         <button class="secondary-button" @click="cancel">取消</button>
       </div>
       <p v-if="error" class="error">{{ error }}</p>
     </div>
     <div v-else-if="step === 3" class="step">
-      <p class="success">TOTP 重置成功！请使用新验证码登录。</p>
+      <p class="success">TOTP 重置已生成，请使用新秘钥登录。</p>
       <button class="primary-button" @click="back">返回</button>
     </div>
   </div>
@@ -39,8 +35,7 @@ import { api } from '@/stores/auth';
 const step = ref(1);
 const qrCode = ref('');
 const otpauthUrl = ref('');
-const code = ref('');
-const oldCode = ref('');
+const password = ref('');
 const error = ref('');
 const loading = ref(false);
 
@@ -48,8 +43,8 @@ async function initReset() {
   error.value = '';
   loading.value = true;
   try {
-    if (!oldCode.value) { error.value = '请输入旧验证码'; loading.value = false; return; }
-    const res = await api.post('/2fa/reset/init', { oldCode: oldCode.value });
+    if (!password.value) { error.value = '请输入账号密码'; loading.value = false; return; }
+    const res = await api.post('/2fa/reset/init', { password: password.value });
     qrCode.value = res.data.qrCode;
     otpauthUrl.value = res.data.otpauth_url;
     step.value = 2;
@@ -60,18 +55,8 @@ async function initReset() {
   }
 }
 
-async function confirmReset() {
-  if (!code.value) { error.value = '请输入验证码'; return; }
-  loading.value = true;
-  error.value = '';
-  try {
-    await api.post('/2fa/reset/confirm', { code: code.value });
-    step.value = 3;
-  } catch (e) {
-    error.value = e.response?.data?.message || '重置失败';
-  } finally {
-    loading.value = false;
-  }
+function finish() {
+  step.value = 3;
 }
 
 function cancel() { step.value = 1; qrCode.value = ''; otpauthUrl.value=''; code.value=''; error.value=''; }

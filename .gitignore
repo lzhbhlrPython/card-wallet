@@ -54,3 +54,6 @@ cache/
 *.tar
 *.tgz
 *.zip
+
+
+demo/

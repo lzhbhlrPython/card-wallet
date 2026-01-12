@@ -38,6 +38,7 @@
           :multiple="true"
         />
       </div>
+      
       <!-- 新增排序单选框 -->
       <div class="filter-group sort-group">
         <span class="filter-label">排序</span>
@@ -58,6 +59,7 @@
             <input type="radio" id="sort-type" value="type" v-model="sortOption" />
             <label for="sort-type">按类型</label>
           </div>
+          
         </div>
       </div>
     </div>
@@ -84,34 +86,45 @@
     />
     <!-- 详情弹窗 -->
     <div v-if="details" class="overlay">
-      <div class="modal">
-        <h3>卡片详情</h3>
-        <p><strong>银行：</strong> {{ details.bank }}</p>
-        <p><strong>组织：</strong> {{ details.network }}</p>
-        <p><strong>类型：</strong> {{ formatCardType(details.card_type || details.cardType) }}</p>
-        <p class="copy-line">
-          <strong>卡号：</strong>
-          <span class="mono">{{ formatCardNumber(details.number) }}</span>
-          <button class="mini-btn" @click="copy(details.number, '卡号')">复制</button>
-        </p>
-        <p class="copy-line">
-          <strong>CVV：</strong>
-          <span class="mono">{{ details.cvv === '000' ? 'null' : details.cvv }}</span>
-          <button class="mini-btn" @click="copy(details.cvv, 'CVV')">复制</button>
-        </p>
-        <p class="copy-line">
-          <strong>有效期：</strong>
-          <span class="mono">{{ formatExpiration(details.expiration) }}</span>
-          <button class="mini-btn" @click="copy(details.expiration, '有效期')">复制</button>
-        </p>
-        <p class="copy-line" v-if="details && details.note">
-          <strong>备注：</strong>
-          <span class="mono" style="white-space:pre-wrap; letter-spacing:0;">{{ details.note }}</span>
-        </p>
-        <div class="actions">
-          <button class="primary-button" @click="details = null">关闭</button>
+      <div class="modal" :style="modalStyle(details)">
+        <div class="modal-inner">
+          <h3>卡片详情</h3>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          
+            <div>
+              <div style="font-weight:600">{{ details.bank }}</div>
+              <div style="font-size:12px;color:#666">{{ details.network }} • {{ formatCardType(details.card_type || details.cardType) }}</div>
+            </div>
+          </div>
+          <p class="copy-line">
+            <strong>卡号：</strong>
+            <span class="mono">{{ formatCardNumber(details.number) }}</span>
+            <button class="mini-btn" @click="copy(details.number, '卡号')">复制</button>
+          </p>
+          <p class="copy-line">
+            <strong>持卡人：</strong>
+            <span class="mono">{{ details.cardholder || '—' }}</span>
+            <button class="mini-btn" v-if="details.cardholder" @click="copy(details.cardholder, '持卡人')">复制</button>
+          </p>
+          <p class="copy-line">
+            <strong>CVV：</strong>
+            <span class="mono">{{ details.cvv === '000' ? 'null' : details.cvv }}</span>
+            <button class="mini-btn" @click="copy(details.cvv, 'CVV')">复制</button>
+          </p>
+          <p class="copy-line">
+            <strong>有效期：</strong>
+            <span class="mono">{{ formatExpiration(details.expiration) }}</span>
+            <button class="mini-btn" @click="copy(details.expiration, '有效期')">复制</button>
+          </p>
+          <p class="copy-line" v-if="details && details.note">
+            <strong>备注：</strong>
+            <span class="mono" style="white-space:pre-wrap; letter-spacing:0;">{{ details.note }}</span>
+          </p>
+          <div class="actions">
+            <button class="primary-button" @click="details = null">关闭</button>
+          </div>
+          <div v-if="copyMessage" class="copy-toast">{{ copyMessage }}</div>
         </div>
-        <div v-if="copyMessage" class="copy-toast">{{ copyMessage }}</div>
       </div>
     </div>
   </div>
@@ -141,6 +154,7 @@ const refreshing = ref(false); // 恢复刷新状态变量
 const networkFilter = ref([]);
 const cardTypeFilter = ref([]);
 const bankFilter = ref([]);
+ 
 // 新增排序选项：default | network | bank
 const sortOption = ref('default');
 
@@ -156,6 +170,8 @@ const allBanks = computed(() => {
   return Array.from(set).sort();
 });
 
+ 
+
 const allCardTypes = computed(() => {
   const set = new Set();
   cards.value.forEach(c => { const t = c.card_type || c.cardType; if (t) set.add(t); });
@@ -169,6 +185,7 @@ const allCardTypesForOptions = computed(() => {
   const present = new Set(allCardTypes.value);
   return CARD_TYPE_ORDER.filter(t => present.has(t)).map(t => ({ value: t, label: formatCardType(t) }));
 });
+ 
 
 // 过滤后卡片
 const filteredCards = computed(() => {
@@ -302,6 +319,24 @@ function copy(val, label) {
     clearTimeout(copyMessage._t);
     copyMessage._t = setTimeout(() => (copyMessage.value = ''), 1600);
   }).catch(() => alert('复制失败'));
+}
+
+// 生成一个基于卡片信息的渐变背景（用于模态框）
+function hashString(s){
+  let h = 2166136261 >>> 0;
+  for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h;
+}
+function modalStyle(details){
+  if(!details) return {};
+  const seed = String(details.id || details.last4 || details.number || '') + '|' + (details.bank||'');
+  const h = hashString(seed);
+  const h1 = (h % 360);
+  const h2 = ((h >> 8) % 360);
+  const sat = 62; const light1 = 48; const light2 = 64;
+  const c1 = `hsl(${h1} ${sat}% ${light1}%)`;
+  const c2 = `hsl(${h2} ${sat}% ${light2}%)`;
+  return { background: `linear-gradient(135deg, ${c1}, ${c2})`, color: '#08233a', boxShadow: '0 8px 30px rgba(10,30,50,0.25)' };
 }
 
 // 移除之前的互相裁剪 watch，避免递归更新；保持简单：用户可以选择任意组合，若组合无交集则结果为空即可。
@@ -447,6 +482,11 @@ function goEdit(id) { router.push(`/cards/${id}/edit`); }
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
   width: 90%;
   max-width: 400px;
+}
+.modal-inner {
+  background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.85));
+  padding: 1rem;
+  border-radius: 10px;
 }
 .modal h3 {
   margin-top: 0;
