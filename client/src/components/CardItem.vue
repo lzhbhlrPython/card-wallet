@@ -10,7 +10,12 @@
       <span class="card-number">{{ maskedLast4 }}</span>
     </div>
     <div class="card-bottom">
-      <span class="expiration" v-if="card.network !== 'tunion' && card.network !== 'ecny'">有效期 {{ card.expiration }}</span>
+      <div class="left-info">
+        <span class="card-type">类型 {{ cardTypeLabel }}</span>
+      </div>
+      <div class="right-info">
+        <span class="expiration" v-if="card.network !== 'tunion' && card.network !== 'ecny'">有效期 {{ card.expiration }}</span>
+      </div>
     </div>
     <div class="actions">
       <button class="secondary-button" @click="$emit('view', card.id)">详情</button>
@@ -42,6 +47,19 @@ const maskedLast4 = computed(() => {
   const last4 = source ? source.slice(-4) : '';
   return '•••• ' + last4;
 });
+
+const cardTypeLabel = computed(() => {
+  const v = props.card?.card_type || props.card?.cardType;
+  if (v === 'credit') return '信用卡';
+  if (v === 'debit') return '借记卡';
+  if (v === 'prepaid') return '预付卡';
+  if (v === 'transit') return '公交卡';
+  if (v === 'ecny_wallet_1') return '一类钱包';
+  if (v === 'ecny_wallet_2') return '二类钱包';
+  if (v === 'ecny_wallet_3') return '三类钱包';
+  if (v === 'ecny_wallet_4') return '四类钱包';
+  return v || '信用卡';
+});
 </script>
 
 <style scoped>
@@ -58,7 +76,11 @@ const maskedLast4 = computed(() => {
 .network-logo { height:24px; object-fit:contain; }
 .bank-name { font-weight:500; font-size:0.9rem; color:#333; }
 .card-middle { margin-bottom:0.5rem; font-size:1.2rem; letter-spacing:2px; font-family:'SF Mono','Menlo',monospace; }
-.card-bottom { font-size:0.85rem; color:#666; }
+.card-bottom { font-size:0.9rem; color:#333; display:flex; align-items:center; justify-content:space-between; gap: 0.5rem; }
+.left-info { display:flex; align-items:center; }
+.right-info { display:flex; align-items:center; }
+.card-type { white-space: nowrap; font-weight:600; color: #333; }
+.expiration { font-weight:600; color: #333; }
 .actions { margin-top:0.5rem; display:flex; justify-content:space-between; }
 .secondary-button, .danger-button { padding:0.25rem 0.5rem; border:1px solid #d1d5db; border-radius:6px; background:none; cursor:pointer; font-size:0.85rem; transition:background-color .2s; }
 .secondary-button:hover { background:#f3f4f6; }

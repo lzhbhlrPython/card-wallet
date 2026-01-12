@@ -10,7 +10,6 @@ const Setup2FA = () => import('@/pages/Setup2FA.vue');
 const CardList = () => import('@/pages/CardList.vue');
 const CardForm = () => import('@/pages/CardForm.vue');
 const Backup = () => import('@/pages/Backup.vue');
-const CardDetails = () => import('@/pages/CardDetails.vue');
 const Reset2FA = () => import('@/pages/Reset2FA.vue');
 const FPSList = () => import('@/pages/FPSList.vue');
 const FPSForm = () => import('@/pages/FPSForm.vue');
@@ -26,7 +25,7 @@ const router = createRouter({
     { path: '/cards', component: CardList, meta: { requiresAuth: true } },
     { path: '/cards/new', component: CardForm, meta: { requiresAuth: true } },
     { path: '/cards/:id/edit', component: CardForm, props: true, meta: { requiresAuth: true } },
-    { path: '/cards/:id', component: CardDetails, props: true, meta: { requiresAuth: true } },
+    // Card details are shown in a modal from the list; route removed to avoid duplicate entrypoints
     { path: '/backup', component: Backup, meta: { requiresAuth: true } },
     { path: '/2fa-reset', component: Reset2FA, meta: { requiresAuth: true } },
     { path: '/fps', component: FPSList, meta: { requiresAuth: true } },

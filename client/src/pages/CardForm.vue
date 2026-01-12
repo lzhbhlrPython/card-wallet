@@ -46,6 +46,18 @@
         <small v-if="!bankOptions.length && !isTUnion" style="color:#d32f2f;font-size:11px;">还没有加载到银行列表，稍候或刷新页面。</small>
       </div>
       <div class="field">
+        <label for="cardType">卡片类型</label>
+        <BankSelect
+          v-model="cardTypeText"
+          :options="cardTypeOptions"
+          :placeholder="cardTypePlaceholder"
+          :disabled="isTUnion"
+          :readonly="true"
+          :allow-create="false"
+          :allow-clear="false"
+        />
+      </div>
+      <div class="field">
         <label for="note">备注</label>
         <textarea id="note" v-model="note" rows="3" placeholder="可选：例如用途、限额、渠道限制等 (最多1000字)" maxlength="1000" />
       </div>
@@ -83,9 +95,62 @@ const cardNumber = ref('');
 const cvv = ref('');
 const expiration = ref('');
 const bank = ref('');
+const cardType = ref('');
+const cardTypeText = ref('');
 const note = ref('');
 const error = ref('');
 const warning = ref(''); // 黄色提示（非阻断）
+
+const isTUnion = computed(()=>/^31\d{17}$/.test(cardNumber.value.replace(/\s+/g,'')));
+const isECNY = computed(()=>/^0\d{15}$/.test(cardNumber.value.replace(/\s+/g,'')));
+
+const cardTypeOptions = computed(() => {
+  if (isTUnion.value) return ['公交卡'];
+  if (isECNY.value) return ['一类钱包', '二类钱包', '三类钱包', '四类钱包'];
+  return ['信用卡', '借记卡', '预付卡'];
+});
+
+const cardTypePlaceholder = computed(() => {
+  if (isTUnion.value) return '公交卡（自动）';
+  if (isECNY.value) return '选择账户类型';
+  return '选择卡片类型';
+});
+
+function cardTypeToText(v) {
+  if (v === 'credit') return '信用卡';
+  if (v === 'debit') return '借记卡';
+  if (v === 'prepaid') return '预付卡';
+  if (v === 'transit') return '公交卡';
+  if (v === 'ecny_wallet_1') return '一类钱包';
+  if (v === 'ecny_wallet_2') return '二类钱包';
+  if (v === 'ecny_wallet_3') return '三类钱包';
+  if (v === 'ecny_wallet_4') return '四类钱包';
+  return '';
+}
+
+function textToCardType(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  if (s === '信用卡') return 'credit';
+  if (s === '借记卡') return 'debit';
+  if (s === '预付卡') return 'prepaid';
+  if (s === '公交卡') return 'transit';
+  if (s === '一类钱包') return 'ecny_wallet_1';
+  if (s === '二类钱包') return 'ecny_wallet_2';
+  if (s === '三类钱包') return 'ecny_wallet_3';
+  if (s === '四类钱包') return 'ecny_wallet_4';
+  return null;
+}
+
+watch(cardTypeText, (v) => {
+  const t = textToCardType(v);
+  if (t) cardType.value = t;
+});
+
+watch(cardType, (v) => {
+  const txt = cardTypeToText(v);
+  if (cardTypeText.value !== txt) cardTypeText.value = txt;
+});
 
 const showPrompt = ref(false);
 const promptTitle = ref('');
@@ -96,8 +161,6 @@ const bankOptions = computed(() => {
   cardsStore.cards.forEach(c => { if (c.bank) set.add(c.bank); });
   return Array.from(set).sort();
 });
-const isTUnion = computed(()=>/^31\d{17}$/.test(cardNumber.value.replace(/\s+/g,'')));
-const isECNY = computed(()=>/^0\d{15}$/.test(cardNumber.value.replace(/\s+/g,'')));
 
 onMounted(async () => {
   // 方案A：无条件刷新，确保银行选项最新（避免直接进 /cards/new 时列表未先加载）
@@ -113,9 +176,27 @@ watch(isTUnion, (v)=>{
   if(v){
     expiration.value='12/99';
     bank.value='CHINA T-UNION';
+    cardType.value = 'transit';
+    cardTypeText.value = '公交卡';
   }
 });
-watch(isECNY,(v)=>{ if(v){ expiration.value='12/99'; cvv.value='000'; } });
+watch(isECNY,(v, prev)=>{
+  if(v){
+    expiration.value='12/99';
+    cvv.value='000';
+    // eCNY 账户类型必须选择：从非 eCNY 切入时清空
+    if(!prev){
+      cardType.value = '';
+      cardTypeText.value = '';
+    }
+  } else {
+    // 从 eCNY 切回普通卡：清空，要求重新选择
+    if(prev){
+      cardType.value = '';
+      cardTypeText.value = '';
+    }
+  }
+});
 
 async function handlePromptConfirm(code) {
   showPrompt.value = false;
@@ -127,6 +208,8 @@ async function handlePromptConfirm(code) {
       expiration.value = normalizeExpiration(data.expiration || '');
       cvv.value = data.cvv;
       bank.value = data.bank;
+      cardType.value = data.card_type || data.cardType || '';
+      cardTypeText.value = cardTypeToText(cardType.value);
       note.value = data.note || '';
     } else {
       error.value = res.message;
@@ -135,7 +218,7 @@ async function handlePromptConfirm(code) {
     const expNorm = normalizeExpiration(expiration.value);
     const res = await cardsStore.updateCard(
       cardId,
-      { cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, note: note.value },
+      { cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, cardType: cardType.value, note: note.value },
       code
     );
     if (res.ok) {
@@ -266,6 +349,29 @@ function isValidCvv(value){
 async function onSubmit(){
   error.value=''; warning.value='';
   expiration.value = normalizeExpiration(expiration.value);
+
+  // 卡片类型：默认空，必须选择；T-Union 自动；eCNY 必选钱包等级
+  if (isTUnion.value) {
+    cardType.value = 'transit';
+    cardTypeText.value = '公交卡';
+  } else {
+    const typeParsed = textToCardType(cardTypeText.value) || cardType.value;
+    if (!typeParsed) { error.value = '卡片类型必填'; return; }
+    cardType.value = typeParsed;
+  }
+
+  if (isECNY.value) {
+    if (!['ecny_wallet_1','ecny_wallet_2','ecny_wallet_3','ecny_wallet_4'].includes(cardType.value)) {
+      error.value = 'eCNY 账户类型必选';
+      return;
+    }
+  } else if (!isTUnion.value) {
+    if (!['credit','debit','prepaid'].includes(cardType.value)) {
+      error.value = '卡片类型不正确';
+      return;
+    }
+  }
+
   const r = validateCardNumber(cardNumber.value);
   if(!r.ok){
     if(r.reason==='empty') error.value='请输入卡号';
@@ -290,7 +396,7 @@ async function onSubmit(){
     promptTitle.value='输入验证码以更新卡片'; pendingAction.value='update'; showPrompt.value=true;
   } else {
     const expNorm = normalizeExpiration(expiration.value);
-    const res = await cardsStore.addCard({ cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, note: note.value });
+    const res = await cardsStore.addCard({ cardNumber: cardNumber.value, cvv: cvv.value, expiration: expNorm, bank: bank.value, cardType: cardType.value, note: note.value });
     if(res.ok) router.push('/cards'); else error.value=res.message;
   }
 }

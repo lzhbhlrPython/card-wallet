@@ -21,6 +21,15 @@
         />
       </div>
       <div class="filter-group">
+        <label class="filter-label">类型</label>
+        <InlineFilterSelect
+          v-model="cardTypeFilter"
+          :options="allCardTypesForOptions"
+          placeholder="类型"
+          :multiple="true"
+        />
+      </div>
+      <div class="filter-group">
         <label class="filter-label">银行</label>
         <InlineFilterSelect
           v-model="bankFilter"
@@ -44,6 +53,10 @@
             <div class="sort-radio">
             <input type="radio" id="sort-bank" value="bank" v-model="sortOption" />
             <label for="sort-bank">按银行</label>
+          </div>
+          <div class="sort-radio">
+            <input type="radio" id="sort-type" value="type" v-model="sortOption" />
+            <label for="sort-type">按类型</label>
           </div>
         </div>
       </div>
@@ -75,6 +88,7 @@
         <h3>卡片详情</h3>
         <p><strong>银行：</strong> {{ details.bank }}</p>
         <p><strong>组织：</strong> {{ details.network }}</p>
+        <p><strong>类型：</strong> {{ formatCardType(details.card_type || details.cardType) }}</p>
         <p class="copy-line">
           <strong>卡号：</strong>
           <span class="mono">{{ formatCardNumber(details.number) }}</span>
@@ -125,6 +139,7 @@ const details = ref(null); // 当前查看的卡片详情
 const refreshing = ref(false); // 恢复刷新状态变量
 // 允许多选：数组
 const networkFilter = ref([]);
+const cardTypeFilter = ref([]);
 const bankFilter = ref([]);
 // 新增排序选项：default | network | bank
 const sortOption = ref('default');
@@ -140,16 +155,29 @@ const allBanks = computed(() => {
   cards.value.forEach(c => { if (c.bank) set.add(c.bank); });
   return Array.from(set).sort();
 });
-// 可供组件 options
+
+const allCardTypes = computed(() => {
+  const set = new Set();
+  cards.value.forEach(c => { const t = c.card_type || c.cardType; if (t) set.add(t); });
+  return Array.from(set);
+});
+// 可供组件 options（固定顺序）
+const CARD_TYPE_ORDER = ['credit','debit','prepaid','transit','ecny_wallet_1','ecny_wallet_2','ecny_wallet_3','ecny_wallet_4'];
 const allNetworksForOptions = computed(()=> allNetworks.value.map(v=>({ value:v, label:v })));
 const allBanksForOptions = computed(()=> allBanks.value.map(v=>({ value:v, label:v })));
+const allCardTypesForOptions = computed(() => {
+  const present = new Set(allCardTypes.value);
+  return CARD_TYPE_ORDER.filter(t => present.has(t)).map(t => ({ value: t, label: formatCardType(t) }));
+});
 
 // 过滤后卡片
 const filteredCards = computed(() => {
   return cards.value.filter(c => {
     const netOk = !networkFilter.value.length || networkFilter.value.includes(c.network);
+    const typeValue = c.card_type || c.cardType || 'credit';
+    const typeOk = !cardTypeFilter.value.length || cardTypeFilter.value.includes(typeValue);
     const bankOk = !bankFilter.value.length || bankFilter.value.includes(c.bank);
-    return netOk && bankOk;
+    return netOk && typeOk && bankOk;
   });
 });
 // 基于过滤后的结果再排序
@@ -159,6 +187,9 @@ const sortedCards = computed(() => {
     arr.sort((a,b)=> (a.network||'').localeCompare(b.network||'', 'zh-CN'));
   } else if (sortOption.value === 'bank') {
     arr.sort((a,b)=> (a.bank||'').localeCompare(b.bank||'', 'zh-CN'));
+  } else if (sortOption.value === 'type') {
+    const idx = (t) => CARD_TYPE_ORDER.indexOf(t || 'credit');
+    arr.sort((a,b)=> idx(a.card_type || a.cardType) - idx(b.card_type || b.cardType));
   }
   return arr;
 });
@@ -249,6 +280,18 @@ function formatExpiration(exp) {
   const digits = String(exp).replace(/\D/g, '').slice(0, 4);
   if (digits.length < 3) return digits; // 不足以加 /
   return digits.slice(0, 2) + '/' + digits.slice(2);
+}
+
+function formatCardType(v) {
+  if (v === 'credit') return '信用卡';
+  if (v === 'debit') return '借记卡';
+  if (v === 'prepaid') return '预付卡';
+  if (v === 'transit') return '公交卡';
+  if (v === 'ecny_wallet_1') return '一类钱包';
+  if (v === 'ecny_wallet_2') return '二类钱包';
+  if (v === 'ecny_wallet_3') return '三类钱包';
+  if (v === 'ecny_wallet_4') return '四类钱包';
+  return v || '信用卡';
 }
 
 const copyMessage = ref('');

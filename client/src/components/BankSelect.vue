@@ -5,6 +5,7 @@
       v-model="inputValue"
       class="bank-select-input"
       :disabled="disabled"
+      :readonly="readonly"
       @keydown.esc.prevent="!disabled && close()"
       @input="!disabled && onInput()"
       @keydown.down.prevent="!disabled && move(1)"
@@ -12,7 +13,7 @@
       @keydown.enter.prevent="!disabled && confirmActive()"
       @focus="!disabled && open()"
     />
-    <button v-if="inputValue && !disabled" class="clear-btn" type="button" @click="clear" aria-label="清除">×</button>
+    <button v-if="allowClear && inputValue && !disabled" class="clear-btn" type="button" @click="clear" aria-label="清除">×</button>
     <ul v-if="dropdownOpen && !disabled" class="options" role="listbox">
       <li
         v-for="(o,i) in filtered"
@@ -22,7 +23,7 @@
         @mouseenter="activeIndex=i"
         @mousedown.prevent="select(o)"
       >{{ o }}</li>
-      <li v-if="!filtered.length" class="option empty">无匹配，回车创建 “{{ inputValue.trim() }}”</li>
+      <li v-if="!filtered.length && allowCreate && !readonly" class="option empty">无匹配，回车创建 “{{ inputValue.trim() }}”</li>
     </ul>
   </div>
 </template>
@@ -35,6 +36,9 @@ const props = defineProps({
   options: { type: Array, default: () => [] },
   placeholder: { type: String, default: '' },
   disabled: { type: Boolean, default: false },
+  readonly: { type: Boolean, default: false },
+  allowCreate: { type: Boolean, default: true },
+  allowClear: { type: Boolean, default: true },
 });
 const emit = defineEmits(['update:modelValue']);
 
@@ -48,13 +52,23 @@ const root = ref(null);
 const filtered = computed(() => {
   const kw = inputValue.value.trim().toLowerCase();
   const arr = [...new Set(props.options.filter(Boolean))].sort();
+  // 当为 readonly 模式时，显示完整选项以便用户从列表中选择（屏蔽基于输入的过滤）
+  if (props.readonly) return arr.slice(0, 50);
   if (!kw) return arr.slice(0, 50);
   return arr.filter(o => o.toLowerCase().includes(kw)).slice(0, 50);
 });
 
-function open() { dropdownOpen.value = true; }
+function open() {
+  dropdownOpen.value = true;
+  if (activeIndex.value < 0 && filtered.value.length) activeIndex.value = 0;
+}
 function close() { dropdownOpen.value = false; activeIndex.value = -1; }
-function onInput() { open(); emit('update:modelValue', inputValue.value.trim()); activeIndex.value = 0; }
+function onInput() {
+  if (props.readonly) return;
+  open();
+  emit('update:modelValue', inputValue.value.trim());
+  activeIndex.value = 0;
+}
 function move(delta) {
   if (!dropdownOpen.value) open();
   if (!filtered.value.length) return;
@@ -64,9 +78,11 @@ function confirmActive() {
   if (dropdownOpen.value && filtered.value.length && activeIndex.value >= 0) {
     select(filtered.value[activeIndex.value]);
   } else {
-    // 创建新值
-    emit('update:modelValue', inputValue.value.trim());
-    close();
+    // 创建新值（可选）
+    if (props.allowCreate && !props.readonly) {
+      emit('update:modelValue', inputValue.value.trim());
+      close();
+    }
   }
 }
 function select(val) {
@@ -75,6 +91,7 @@ function select(val) {
   close();
 }
 function clear() {
+  if (!props.allowClear) return;
   inputValue.value = '';
   emit('update:modelValue', '');
   open();
