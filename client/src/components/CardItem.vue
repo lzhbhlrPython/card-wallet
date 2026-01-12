@@ -79,8 +79,8 @@ const cardTypeLabel = computed(() => {
 .card-bottom { font-size:0.9rem; color:#333; display:flex; align-items:center; justify-content:space-between; gap: 0.5rem; }
 .left-info { display:flex; align-items:center; }
 .right-info { display:flex; align-items:center; }
-.card-type { white-space: nowrap; font-weight:600; color: #333; }
-.expiration { font-weight:600; color: #333; }
+.card-type { white-space: nowrap; font-weight:400; color: #666; font-size:0.8rem; }
+.expiration { font-weight:400; color: #666; font-size:0.8rem; }
 .actions { margin-top:0.5rem; display:flex; justify-content:space-between; }
 .secondary-button, .danger-button { padding:0.25rem 0.5rem; border:1px solid #d1d5db; border-radius:6px; background:none; cursor:pointer; font-size:0.85rem; transition:background-color .2s; }
 .secondary-button:hover { background:#f3f4f6; }
