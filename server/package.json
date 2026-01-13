@@ -1,6 +1,6 @@
 {
   "name": "card-wallet-server",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Backend for the Vue-based credit card management system with encrypted SQLite storage and optional WebDAV backup.",
   "main": "index.js",
   "scripts": {

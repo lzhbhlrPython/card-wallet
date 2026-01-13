@@ -862,8 +862,15 @@ app.post('/cards/purge', authenticateToken, require2FA, (req, res) => {
             return res.status(500).json({ message: 'Purge FPS accounts failed' });
           }
           const fpsDeleted = this.changes || 0;
-          db.run('COMMIT');
-          res.json({ message: 'All information purged', cardsDeleted: cardDeleted, fpsDeleted });
+          db.run('DELETE FROM documents WHERE user_id = ?', [userId], function(docErr) {
+            if (docErr) {
+              db.run('ROLLBACK');
+              return res.status(500).json({ message: 'Purge documents failed' });
+            }
+            const documentsDeleted = this.changes || 0;
+            db.run('COMMIT');
+            res.json({ message: 'All information purged', cardsDeleted: cardDeleted, fpsDeleted, documentsDeleted });
+          });
         });
       });
     });
