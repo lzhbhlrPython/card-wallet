@@ -1,16 +1,20 @@
 # Copilot Instructions for card-wallet
 
-Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Express + SQLite back-end app for managing card/FPS data with encryption and 2FA.
+Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Express + SQLite back-end app for managing card/FPS/document data with encryption and 2FA.
 
 ## Architecture (big picture)
 - Front-end (Vue 3 + Pinia + Router + Vite)
   - Entry: `client/src/main.js`; routes: `client/src/router/index.js`; store: `client/src/stores/**`; pages: `client/src/pages/**`.
   - Global axios instance and auth store in `client/src/stores/auth.js` (hardcoded baseURL `http://localhost:3000`).
+  - Reusable components: `BankSelect.vue` (dropdown with search), `Calendar.vue` (date picker), `Modal.vue` (alert/confirm), `TwoFactorPrompt.vue`.
 - Back-end (Express, single file): `server/index.js`
   - SQLite file at `server/data/database.sqlite` (created on first run). Foreign keys ON; conditional schema upgrades via `PRAGMA table_info` + `ALTER TABLE`.
-  - Sensitive fields encrypted AES-256-CBC via helpers `encrypt(text)` / `decrypt(data)` (derived key from `ENCRYPTION_KEY`).
+  - **Dual encryption system**:
+    - Cards/FPS: AES-256-CBC via `encrypt(text)` / `decrypt(data)` (derived key from `ENCRYPTION_KEY`).
+    - Documents: RSA-2048 per-user keypair. Public key encrypts document fields; private key (stored encrypted with AES) decrypts. Helpers: `encryptRSA()` / `decryptRSA()`.
   - Static logos served at `/logos` from `assets/logos`; `helmet` configured with `crossOriginResourcePolicy: cross-origin` so Vite dev origin can load them.
 - Auth: JWT (Authorization: Bearer). 2FA via TOTP (speakeasy). For sensitive endpoints send TOTP in header `x-totp` or body/query `totpCode`.
+- Password security: Client sends MD5(password); server stores bcrypt(MD5(password)). Protects against both network sniffing and DB leaks.
 
 ## Dev, build, deploy
 - Install: `cd client && npm i && cd ../server && npm i`
