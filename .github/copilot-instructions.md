@@ -24,24 +24,28 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 - Deploy UI: serve `client/dist` via static hosting. If API origin/port differs, update `client/src/stores/auth.js` baseURL or place the API behind the same origin (reverse proxy). Vite runtime env must use `VITE_*` if needed in client.
 
 ## Back-end conventions (server/index.js)
-- Middleware: use `authenticateToken` on protected routes; add `require2FA` on routes that return or mutate secrets (cards detail, update, delete; FPS detail/update/delete; backup; purge).
-- Lists vs details: `GET /cards` returns minimal metadata only (server computes `last4`; never return full number/CVV). Full details via `GET /cards/:id` with 2FA.
- - New sensitive field: `cards.encrypted_cardholder` (encrypted). `cardholder` is only returned by the detail endpoint (requires 2FA).
-- Card type (`cards.card_type`): stores card attribute as one of `credit` | `debit` | `prepaid`.
- - Card type (`cards.card_type`): stores card attribute as English enum string.
+- Middleware: use `authenticateToken` on protected routes; add `require2FA` on routes that return or mutate secrets (cards detail, update, delete; FPS detail/update/delete; documents detail/update/delete; backup; purge).
+- **Three resource types** (similar patterns):
+  1. **Cards** (`cards` table): List returns masked data (last4); details require 2FA; fields: `encrypted_number`, `encrypted_cvv`, `encrypted_expiration`, `encrypted_cardholder`, `card_type`, `bank`, `note`.
+  2. **FPS** (`fps_accounts` table): List excludes `note`; details require 2FA; fields: `fps_id`, `recipient`, `bank`, `note`.
+  3. **Documents** (`documents` table): List returns masked document_number (XX****XX, always 8 chars); details require 2FA; fields: `encrypted_holder_name`, `encrypted_holder_name_latin`, `encrypted_document_number`, `encrypted_issue_date`, `encrypted_expiry_date`, `expiry_date_permanent`, `encrypted_issue_place`, `expiry_date_format`, `document_type`, `note`. Uses RSA encryption.
+- Card type (`cards.card_type`): stores card attribute as English enum string.
   - DB: `cards` table has `card_type TEXT DEFAULT 'credit'` and is added via `PRAGMA table_info` + `ALTER TABLE` migration.
   - API: list/details responses include `card_type`; create/update accept either `cardType` or `card_type`.
   - Rules (server-enforced):
-    - T-Union (`network='tunion'`): `card_type` is forced to `transit` (UI shows “公交卡”, input disabled)
-    - eCNY (`network='ecny'`): `card_type` must be one of `ecny_wallet_1|ecny_wallet_2|ecny_wallet_3|ecny_wallet_4` (UI shows “一类/二类/三类/四类钱包”)
+    - T-Union (`network='tunion'`): `card_type` is forced to `transit` (UI shows "公交卡", input disabled)
+    - eCNY (`network='ecny'`): `card_type` must be one of `ecny_wallet_1|ecny_wallet_2|ecny_wallet_3|ecny_wallet_4` (UI shows "一类/二类/三类/四类钱包")
     - Other networks: `card_type` must be one of `credit|debit|prepaid`
 - Card network rules (see `getCardNetwork`):
   - eCNY: number `^0\d{15}$` -> force `cvv=000`, `expiration=12/99`.
   - CHINA T-UNION: `^31\d{17}$` -> force `bank='CHINA T-UNION'`, `expiration=12/99`.
   - Other schemes validated by length + Luhn; unknown allows 1–80 digits.
-- FPS: `GET /fps` returns rows without `note`; `GET/PUT/DELETE /fps/:id` require 2FA; banks list at `GET /fps/banks` (defined before `/:id`).
+- RSA key pair lifecycle:
+  - New users: keys generated on registration via `generateRSAKeyPair()`.
+  - Old users: keys auto-generated on first login after upgrade (backward compatible).
+  - Private key stored encrypted with same AES mechanism as card data.
 - Backup: `POST /backup` (2FA) uploads DB via WebDAV; sanitizes `subdir`; timestamped filename `cardmanager_backup_YYYYMMDD_HHmmss.sqlite`.
-- Purge: `POST /cards/purge` (master password + 2FA) deletes cards and FPS accounts in a transaction; returns deleted counts.
+- Purge: `POST /cards/purge` (master password + 2FA) deletes cards, FPS accounts, and documents in a transaction; returns deleted counts.
 - Misc: `app.set('etag', false)` to avoid 304 on JSON; `/logos` static path points to `assets/logos`.
 
 ## 2FA setup and reset
@@ -61,11 +65,11 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
   - Replaces browser alert() for consistent UX; integrated in App.vue for global access.
 - Card type UI: stored as `card_type` from API but displayed as Chinese labels.
   - Form: `client/src/pages/CardForm.vue` uses `client/src/components/BankSelect.vue` in readonly mode to prevent invalid input.
-    - Normal cards: must choose “信用卡/借记卡/预付卡” -> submit `credit/debit/prepaid`
-    - T-Union: auto “公交卡” -> submit `transit` (input disabled)
-    - eCNY: must choose “一类/二类/三类/四类钱包” -> submit `ecny_wallet_1..4`
-  - List item: `client/src/components/CardItem.vue` shows “类型 信用卡/借记卡/预付卡/公交卡/钱包等级”.
-  - Details: `client/src/pages/CardDetails.vue` and the modal in `client/src/pages/CardList.vue` show “类型 …”.
+    - Normal cards: must choose "信用卡/借记卡/预付卡" -> submit `credit/debit/prepaid`
+    - T-Union: auto "公交卡" -> submit `transit` (input disabled)
+    - eCNY: must choose "一类/二类/三类/四类钱包" -> submit `ecny_wallet_1..4`
+  - List item: `client/src/components/CardItem.vue` shows "类型 信用卡/借记卡/预付卡/公交卡/钱包等级".
+  - Details: `client/src/pages/CardDetails.vue` and the modal in `client/src/pages/CardList.vue` show "类型 …".
   - List filtering and sorting:
     - `client/src/pages/CardList.vue` exposes a **类型** 多选筛选（展示为中文），筛选项展示顺序固定为：信用卡 / 借记卡 / 预付卡 / 公交卡 / 一类钱包 / 二类钱包 / 三类钱包 / 四类钱包。
     - `client/src/pages/CardList.vue` 支持按类型排序（`sortOption='type'`），使用上述固定顺序排序结果。
@@ -99,5 +103,4 @@ Purpose: Enable AI agents to be productive in this Vue 3 + Vite front-end and Ex
 
 ## Pitfalls to respect
 - Client API baseURL is hardcoded in `client/src/stores/auth.js`; update if server port/origin changes.
- 
 - Keep list endpoints free of full secrets; compute `last4` server-side. Ensure new sensitive endpoints always use `authenticateToken` + `require2FA`.
