@@ -34,6 +34,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { md5 } from '@/utils/md5';
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -56,7 +57,8 @@ onMounted(() => {
 
 async function onSubmit() {
   error.value = '';
-  const response = await auth.login(username.value, password.value, requireTotp.value ? totpCode.value : undefined);
+  const passwordMd5 = md5(password.value);
+  const response = await auth.login(username.value, passwordMd5, requireTotp.value ? totpCode.value : undefined);
   if (response.ok) {
     const redirect = route.query.redirect || '/cards';
     router.push(redirect);

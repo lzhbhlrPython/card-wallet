@@ -14,6 +14,8 @@ const Reset2FA = () => import('@/pages/Reset2FA.vue');
 const FPSList = () => import('@/pages/FPSList.vue');
 const FPSForm = () => import('@/pages/FPSForm.vue');
 const FPSDetail = () => import('@/pages/FPSDetail.vue');
+const DocumentList = () => import('@/pages/DocumentList.vue');
+const DocumentForm = () => import('@/pages/DocumentForm.vue');
 
 const router = createRouter({
   history: createWebHistory(),
@@ -32,6 +34,9 @@ const router = createRouter({
     { path: '/fps/new', component: FPSForm, meta: { requiresAuth: true } },
     { path: '/fps/:id/edit', component: FPSForm, props: true, meta: { requiresAuth: true } },
     { path: '/fps/:id', component: FPSDetail, props: true, meta: { requiresAuth: true } },
+    { path: '/documents', component: DocumentList, meta: { requiresAuth: true } },
+    { path: '/documents/new', component: DocumentForm, meta: { requiresAuth: true } },
+    { path: '/documents/:id/edit', component: DocumentForm, props: true, meta: { requiresAuth: true } },
   ],
 });
 

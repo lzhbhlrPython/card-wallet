@@ -30,6 +30,7 @@
 <script setup>
 import { ref } from 'vue';
 import { useAuthStore } from '@/stores/auth';
+import { md5 } from '@/utils/md5';
 
 const auth = useAuthStore();
 const username = ref('');
@@ -45,7 +46,8 @@ async function onSubmit() {
     error.value = '两次输入的密码不一致';
     return;
   }
-  const response = await auth.register(username.value, password.value);
+  const passwordMd5 = md5(password.value);
+  const response = await auth.register(username.value, passwordMd5);
   if (response.ok) {
     success.value = true;
     username.value = '';

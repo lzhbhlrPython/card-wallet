@@ -22,6 +22,7 @@ server_test.py
   --rounds N        重复执行 N 轮（每轮对选定网络各创建 1 张）
   --fps             启用 FPS 账户轮巡测试（每轮创建 1 条 FPS 账户）
   --fps-banks       自定义 FPS 银行逗号分隔列表，优先于接口 /fps/banks
+  --documents       启用证件测试（每轮创建随机证件）
 """
 from __future__ import annotations
 import os, sys, json, random, argparse, time
@@ -248,6 +249,109 @@ def random_fps_id():
     length = RANDOM.randint(8,12)
     return ''.join(str(RANDOM.randint(0,9)) for _ in range(length))
 
+# ---------------- Documents 测试辅助 ----------------
+
+def random_document_type():
+    return RANDOM.choice(['passport', 'id_card', 'travel_permit', 'drivers_license'])
+
+def random_document_number(doc_type):
+    if doc_type == 'passport':
+        return 'P' + ''.join(str(RANDOM.randint(0,9)) for _ in range(8))
+    elif doc_type == 'id_card':
+        return ''.join(str(RANDOM.randint(0,9)) for _ in range(18))
+    elif doc_type == 'travel_permit':
+        return 'H' + ''.join(str(RANDOM.randint(0,9)) for _ in range(8))
+    else:  # drivers_license
+        return ''.join(str(RANDOM.randint(0,9)) for _ in range(12))
+
+def build_document_payload():
+    doc_type = random_document_type()
+    holder_name = RANDOM.choice(['张三', '李四', '王五', 'John Doe', 'Jane Smith'])
+    holder_name_latin = 'Zhang San' if '张' in holder_name else ('Li Si' if '李' in holder_name else '')
+    doc_number = random_document_number(doc_type)
+    
+    # 随机决定是否为长期证件
+    is_permanent = RANDOM.random() < 0.2  # 20% 概率是长期
+    
+    # 签发日期：过去的某个日期
+    issue_date = f"20{RANDOM.randint(15,24)}-{RANDOM.randint(1,12):02d}-{RANDOM.randint(1,28):02d}"
+    
+    # 有效期：如果不是长期，则是未来的某个日期
+    expiry_date = '' if is_permanent else f"20{RANDOM.randint(25,35)}-{RANDOM.randint(1,12):02d}-{RANDOM.randint(1,28):02d}"
+    
+    issue_place = RANDOM.choice(['Beijing', 'Shanghai', 'Hong Kong', 'New York', ''])
+    return {
+        'documentType': doc_type,
+        'holderName': holder_name,
+        'holderNameLatin': holder_name_latin or None,
+        'documentNumber': doc_number,
+        'issueDate': issue_date,
+        'expiryDate': expiry_date or None,
+        'expiryDatePermanent': is_permanent,
+        'expiryDateFormat': RANDOM.choice(['YMD', 'MDY', 'DMY']),
+        'issuePlace': issue_place or None,
+        'note': f'Test document {doc_type} {"(permanent)" if is_permanent else ""}'
+    }
+
+def post_document(session, base_url: str, token: str, payload: dict, verbose=False):
+    url = base_url.rstrip('/') + '/documents'
+    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+    if requests:
+        r = session.post(url, headers=headers, json=payload, timeout=10)
+        ok = r.status_code == 200
+        try:
+            data = r.json()
+        except Exception:
+            data = {'raw': r.text}
+        if verbose or not ok:
+            print(f"[Document {payload['documentType']}] status={r.status_code} resp={data}")
+        return ok, data
+    else:
+        import urllib.request, urllib.error
+        req = urllib.request.Request(url, method='POST', headers=headers, data=json.dumps(payload).encode())
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode()
+                try:
+                    data = json.loads(body)
+                except Exception:
+                    data = {'raw': body}
+                ok = resp.status == 200
+                if verbose or not ok:
+                    print(f"[Document {payload['documentType']}] status={resp.status} resp={data}")
+                return ok, data
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            print(f"[Document {payload['documentType']}] ERROR status={e.code} body={body}")
+            return False, {'error': body}
+        except Exception as e:
+            print(f"[Document {payload['documentType']}] ERROR {e}")
+            return False, {'error': str(e)}
+
+def fetch_documents(session, base_url: str, token: str):
+    url = base_url.rstrip('/') + '/documents'
+    headers = {'Authorization': f'Bearer {token}'}
+    if requests:
+        r = session.get(url, headers=headers, timeout=10)
+        try:
+            return r.status_code, r.json()
+        except Exception:
+            return r.status_code, r.text
+    else:
+        import urllib.request, urllib.error
+        req = urllib.request.Request(url, method='GET', headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode()
+                try:
+                    return resp.status, json.loads(body)
+                except Exception:
+                    return resp.status, body
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode()
+        except Exception as e:
+            return 0, str(e)
+
 def build_fps_payload(bank: str):
     return {
         'fpsId': random_fps_id(),
@@ -356,6 +460,7 @@ def parse_args():
     p.add_argument('--rounds', type=int, default=1, help='重复轮数')
     p.add_argument('--fps', action='store_true', help='启用 FPS 账户轮巡测试')
     p.add_argument('--fps-banks', help='自定义 FPS 银行列表 (逗号分隔)')
+    p.add_argument('--documents', action='store_true', help='启用证件测试')
     return p.parse_args()
 
 def main():
@@ -364,9 +469,12 @@ def main():
         print('支持网络:', ', '.join(SUPPORTED))
         return 0
     token = args.token or os.getenv('TOKEN')
+    
     if not token:
-        print('错误: 需要 --token 或环境变量 TOKEN')
+        print('错误: 未提供 token')
+        print('请使用 --token 参数或设置环境变量 TOKEN')
         return 1
+        
     only = [s.strip().lower() for s in args.only.split(',')] if args.only else SUPPORTED
     skip = set(s.strip().lower() for s in args.skip.split(',')) if args.skip else set()
     targets = [n for n in only if n in SUPPORTED and n not in skip]
@@ -381,12 +489,15 @@ def main():
     print(f"开始测试：{targets}，轮数={args.rounds}")
     results = []
     fps_results = []
+    doc_results = []
     if args.fps:
         banks = fetch_fps_banks(session, args.base_url, token, args.fps_banks, verbose=args.verbose)
         if not banks:
             print('FPS 银行列表为空，跳过 FPS 测试')
         else:
             print(f"FPS 测试启用，将为每轮每个银行各创建 1 条，共 {len(banks)} 条/轮")
+    if args.documents:
+        print(f"证件测试启用，每轮创建 1 个随机证件")
     for r in range(1, args.rounds+1):
         print(f"\n== 第 {r} 轮 ==")
         for net in targets:
@@ -406,6 +517,14 @@ def main():
                     ok, data = post_fps(session, args.base_url, token, fps_payload, verbose=args.verbose)
                     fps_results.append((fps_payload['fpsId'], ok, data, bank))
                     time.sleep(0.02)
+        if args.documents:
+            doc_payload = build_document_payload()
+            if args.dry_run:
+                print('[DRY][Document]', doc_payload)
+            else:
+                ok, data = post_document(session, args.base_url, token, doc_payload, verbose=args.verbose)
+                doc_results.append((doc_payload['documentType'], ok, data))
+                time.sleep(0.02)
     if not args.dry_run:
         status, cards = fetch_cards(session, args.base_url, token)
         print('\n当前 /cards 列表 (status={}):'.format(status))
@@ -427,6 +546,16 @@ def main():
                 print(' -', item)
         else:
             print(fps_list)
+    if not args.dry_run and args.documents:
+        status_docs, docs_list = fetch_documents(session, args.base_url, token)
+        print(f"\n当前 /documents 列表 (status={status_docs}):")
+        if isinstance(docs_list, list):
+            show = min(len(docs_list), len(doc_results)) or len(docs_list)
+            print(f"显示最近 {show} 条：")
+            for item in docs_list[-show:]:
+                print(' -', item)
+        else:
+            print(docs_list)
     # 汇总
     success = sum(1 for _, ok, _ in results if ok)
     total = len(results)
@@ -443,6 +572,14 @@ def main():
             for fid, ok, data, bank in fps_results:
                 if not ok:
                     print('失败 FPS', fid, bank, data)
+    if args.documents:
+        doc_success = sum(1 for _, ok, _ in doc_results if ok)
+        doc_total = len(doc_results)
+        print(f"证件创建：成功 {doc_success}/{doc_total}")
+        if doc_success != doc_total and args.verbose:
+            for dtype, ok, data in doc_results:
+                if not ok:
+                    print('失败 Document', dtype, data)
     return 0
 
 if __name__ == '__main__':

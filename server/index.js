@@ -10,6 +10,9 @@ const { createClient } = require('webdav');
 const fs = require('fs');
 const path = require('path');
 
+// Check if running in production mode
+const IS_PROD = process.argv.includes('--prod');
+
 // Configuration constants.  In a production environment these should come
 // from environment variables rather than being hard‑coded.  They are
 // collected here to make it clear which pieces of the server should be
@@ -45,6 +48,38 @@ function decrypt(data) {
   let decrypted = decipher.update(encrypted, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   return decrypted;
+}
+
+// RSA encryption helpers for documents.  Each user gets a unique
+// RSA key pair (2048 bits).  The private key is encrypted with
+// AES-256-CBC using the same ENCRYPTION_KEY as card data and stored
+// in the database.  Document fields are encrypted with the user's
+// public key and can only be decrypted with their private key.
+function generateRSAKeyPair() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+  return { publicKey, privateKey };
+}
+
+function encryptRSA(publicKeyPem, text) {
+  const buffer = Buffer.from(text, 'utf8');
+  const encrypted = crypto.publicEncrypt(
+    { key: publicKeyPem, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING },
+    buffer
+  );
+  return encrypted.toString('base64');
+}
+
+function decryptRSA(privateKeyPem, encryptedBase64) {
+  const buffer = Buffer.from(encryptedBase64, 'base64');
+  const decrypted = crypto.privateDecrypt(
+    { key: privateKeyPem, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING },
+    buffer
+  );
+  return decrypted.toString('utf8');
 }
 
 // Basic card network detection.  We strip all non‑digit characters
@@ -140,7 +175,9 @@ db.serialize(() => {
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       totp_secret TEXT,
-      twofactor_enabled INTEGER DEFAULT 0
+      twofactor_enabled INTEGER DEFAULT 0,
+      rsa_public_key TEXT,
+      encrypted_rsa_private_key TEXT
     )`
   );
   db.run(
@@ -172,6 +209,25 @@ db.serialize(() => {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`
   );
+  db.run(
+    `CREATE TABLE IF NOT EXISTS documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      document_type TEXT NOT NULL,
+      encrypted_holder_name TEXT NOT NULL,
+      encrypted_holder_name_latin TEXT,
+      encrypted_document_number TEXT NOT NULL,
+      encrypted_issue_date TEXT,
+      encrypted_expiry_date TEXT,
+      expiry_date_permanent INTEGER DEFAULT 0,
+      encrypted_issue_place TEXT,
+      expiry_date_format TEXT DEFAULT 'YMD',
+      note TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`
+  );
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_fps_user_fpsid ON fps_accounts(user_id, fps_id)');
   db.all('PRAGMA table_info(fps_accounts)', (err, cols) => {
     if (!err && cols && !cols.some(c => c.name === 'note')) {
@@ -189,6 +245,93 @@ db.serialize(() => {
     }
     if (!cols.some(c => c.name === 'encrypted_cardholder')) {
       db.run('ALTER TABLE cards ADD COLUMN encrypted_cardholder TEXT', () => {});
+    }
+  });
+  // 兼容旧版本：users 表添加 RSA 密钥字段
+  db.all('PRAGMA table_info(users)', (err3, cols) => {
+    if (err3 || !cols) return;
+    if (!cols.some(c => c.name === 'rsa_public_key')) {
+      db.run('ALTER TABLE users ADD COLUMN rsa_public_key TEXT', () => {});
+    }
+    if (!cols.some(c => c.name === 'encrypted_rsa_private_key')) {
+      db.run('ALTER TABLE users ADD COLUMN encrypted_rsa_private_key TEXT', () => {});
+    }
+  });
+  // 兼容旧版本：documents 表添加新字段
+  db.all('PRAGMA table_info(documents)', (err4, cols) => {
+    if (err4 || !cols) return;
+    if (!cols.some(c => c.name === 'encrypted_issue_date')) {
+      db.run('ALTER TABLE documents ADD COLUMN encrypted_issue_date TEXT', () => {});
+    }
+    if (!cols.some(c => c.name === 'expiry_date_permanent')) {
+      db.run('ALTER TABLE documents ADD COLUMN expiry_date_permanent INTEGER DEFAULT 0', () => {});
+    }
+    
+    // 修复 encrypted_expiry_date 的 NOT NULL 约束问题（支持长期证件）
+    // SQLite 不支持直接修改列约束，所以我们通过重建表来实现
+    const expiryDateCol = cols.find(c => c.name === 'encrypted_expiry_date');
+    if (expiryDateCol && expiryDateCol.notnull === 1) {
+      console.log('[Migration] Fixing encrypted_expiry_date NOT NULL constraint...');
+      db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+        // 创建临时表
+        db.run(
+          `CREATE TABLE documents_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            document_type TEXT NOT NULL,
+            encrypted_holder_name TEXT NOT NULL,
+            encrypted_holder_name_latin TEXT,
+            encrypted_document_number TEXT NOT NULL,
+            encrypted_issue_date TEXT,
+            encrypted_expiry_date TEXT,
+            expiry_date_permanent INTEGER DEFAULT 0,
+            encrypted_issue_place TEXT,
+            expiry_date_format TEXT DEFAULT 'YMD',
+            note TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          )`,
+          (err) => {
+            if (err) {
+              console.error('[Migration] Failed to create new table:', err);
+              db.run('ROLLBACK');
+              return;
+            }
+            // 复制数据
+            db.run(
+              `INSERT INTO documents_new SELECT * FROM documents`,
+              (err) => {
+                if (err) {
+                  console.error('[Migration] Failed to copy data:', err);
+                  db.run('ROLLBACK');
+                  return;
+                }
+                // 删除旧表
+                db.run('DROP TABLE documents', (err) => {
+                  if (err) {
+                    console.error('[Migration] Failed to drop old table:', err);
+                    db.run('ROLLBACK');
+                    return;
+                  }
+                  // 重命名新表
+                  db.run('ALTER TABLE documents_new RENAME TO documents', (err) => {
+                    if (err) {
+                      console.error('[Migration] Failed to rename table:', err);
+                      db.run('ROLLBACK');
+                      return;
+                    }
+                    db.run('COMMIT', () => {
+                      console.log('[Migration] Successfully fixed encrypted_expiry_date constraint');
+                    });
+                  });
+                });
+              }
+            );
+          }
+        );
+      });
     }
   });
 });
@@ -228,7 +371,7 @@ function authenticateToken(req, res, next) {
 // middleware always calls `next()`.
 function require2FA(req, res, next) {
   const userId = req.user.id;
-  db.get('SELECT twofactor_enabled, totp_secret FROM users WHERE id = ?', userId, (err, row) => {
+  db.get('SELECT username, twofactor_enabled, totp_secret FROM users WHERE id = ?', userId, (err, row) => {
     if (err || !row) return res.status(500).json({ message: 'Failed to verify 2FA status' });
     if (!row.twofactor_enabled) return next();
     const token =
@@ -236,6 +379,7 @@ function require2FA(req, res, next) {
       (req.body && req.body.totpCode) ||
       (req.query && req.query.totpCode);
     if (!token) return res.status(400).json({ message: 'TOTP code required' });
+    
     const verified = speakeasy.totp.verify({ secret: row.totp_secret, encoding: 'base32', token });
     if (!verified) return res.status(400).json({ message: 'Invalid TOTP code' });
     return next();
@@ -295,15 +439,20 @@ function deriveCardTypeForNetwork(network, inputCardType) {
 }
 
 // Registration endpoint.  Creates a new user with a unique
-// username and hashed password.  Responds with a success message
-// when the user is created.  Does not automatically log the user in.
+// username and hashed password.  Also generates an RSA key pair
+// for document encryption; the private key is encrypted with AES
+// and stored alongside the public key.
+// Note: Client sends MD5(password) instead of plaintext for security
+// during transmission. Server stores bcrypt(MD5(password)).
 app.post('/register', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ message: 'Username and password required' });
   const passwordHash = bcrypt.hashSync(password, 10);
+  const { publicKey, privateKey } = generateRSAKeyPair();
+  const encryptedPrivateKey = encrypt(privateKey);
   db.run(
-    'INSERT INTO users (username, password_hash) VALUES (?, ?)',
-    [username, passwordHash],
+    'INSERT INTO users (username, password_hash, rsa_public_key, encrypted_rsa_private_key) VALUES (?, ?, ?, ?)',
+    [username, passwordHash, publicKey, encryptedPrivateKey],
     function (err) {
       if (err) {
         if (err.code === 'SQLITE_CONSTRAINT') {
@@ -319,8 +468,10 @@ app.post('/register', (req, res) => {
 // Login endpoint.  Verifies the username and password.  If 2FA is
 // enabled the client must supply a valid TOTP code in the request
 // body.  On success returns a JWT token containing the user id and
-// username.  The client should store this token and send it in the
-// Authorization header for subsequent requests.
+// username.  If the user doesn't have RSA keys yet (legacy users),
+// generate them now.
+// Note: Client sends MD5(password) instead of plaintext for security
+// during transmission. Server verifies bcrypt.compare(MD5, stored_hash).
 app.post('/login', (req, res) => {
   const { username, password, totpCode } = req.body;
   if (!username || !password) return res.status(400).json({ message: 'Username and password required' });
@@ -333,6 +484,18 @@ app.post('/login', (req, res) => {
       if (!totpCode) return res.status(403).json({ twoFactorRequired: true, message: 'TOTP code required' });
       const verified = speakeasy.totp.verify({ secret: user.totp_secret, encoding: 'base32', token: totpCode });
       if (!verified) return res.status(401).json({ message: 'Invalid TOTP code' });
+    }
+    // 如果用户没有 RSA 密钥对（旧用户），现在生成
+    if (!user.rsa_public_key || !user.encrypted_rsa_private_key) {
+      const { publicKey, privateKey } = generateRSAKeyPair();
+      const encryptedPrivateKey = encrypt(privateKey);
+      db.run(
+        'UPDATE users SET rsa_public_key = ?, encrypted_rsa_private_key = ? WHERE id = ?',
+        [publicKey, encryptedPrivateKey, user.id],
+        (updateErr) => {
+          if (updateErr) console.error('Failed to generate RSA keys for legacy user:', updateErr);
+        }
+      );
     }
     const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '8h' });
     res.json({ token, twoFactorEnabled: !!user.twofactor_enabled });
@@ -784,9 +947,291 @@ app.delete('/fps/:id', authenticateToken, require2FA, (req, res) => {
   });
 });
 
+// ========== Documents API ==========
+// Helper to mask document number for list view
+function maskDocumentNumber(number) {
+  if (!number) return '********'; // 8 asterisks
+  const str = String(number);
+  if (str.length <= 4) {
+    // For short numbers, pad to 8 characters with asterisks
+    const masked = str.replace(/./g, '*');
+    return masked.padEnd(8, '*');
+  }
+  // Show first 2 and last 2 characters, fill middle with asterisks to make total 8 chars
+  return str.slice(0, 2) + '****' + str.slice(-2);
+}
+
+// Minimal document list (no 2FA required, only shows masked data)
+app.get('/documents', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  db.all(
+    'SELECT id, document_type, encrypted_holder_name, encrypted_document_number, note, created_at, updated_at FROM documents WHERE user_id = ? ORDER BY created_at DESC',
+    [userId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ message: '获取证件列表失败' });
+      db.get('SELECT rsa_public_key, encrypted_rsa_private_key FROM users WHERE id = ?', [userId], (userErr, user) => {
+        if (userErr || !user || !user.encrypted_rsa_private_key) {
+          return res.status(500).json({ message: '无法获取解密密钥' });
+        }
+        try {
+          const privateKey = decrypt(user.encrypted_rsa_private_key);
+          const result = rows.map(row => {
+            let holderName = '****';
+            let maskedNumber = '****';
+            try {
+              holderName = decryptRSA(privateKey, row.encrypted_holder_name);
+            } catch (e) {}
+            try {
+              const fullNumber = decryptRSA(privateKey, row.encrypted_document_number);
+              maskedNumber = maskDocumentNumber(fullNumber);
+            } catch (e) {}
+            return {
+              id: row.id,
+              document_type: row.document_type,
+              holder_name: holderName,
+              masked_number: maskedNumber,
+              note: row.note || '',
+              created_at: row.created_at,
+              updated_at: row.updated_at,
+            };
+          });
+          res.json(result);
+        } catch (e) {
+          return res.status(500).json({ message: '解密失败' });
+        }
+      });
+    }
+  );
+});
+
+// Get full document details (requires 2FA)
+app.get('/documents/:id', authenticateToken, require2FA, (req, res) => {
+  const userId = req.user.id;
+  const id = req.params.id;
+  db.get(
+    'SELECT * FROM documents WHERE id = ? AND user_id = ?',
+    [id, userId],
+    (err, row) => {
+      if (err || !row) return res.status(404).json({ message: '未找到该证件' });
+      db.get('SELECT encrypted_rsa_private_key FROM users WHERE id = ?', [userId], (userErr, user) => {
+        if (userErr || !user || !user.encrypted_rsa_private_key) {
+          return res.status(500).json({ message: '无法获取解密密钥' });
+        }
+        try {
+          const privateKey = decrypt(user.encrypted_rsa_private_key);
+          const holderName = decryptRSA(privateKey, row.encrypted_holder_name);
+          const holderNameLatin = row.encrypted_holder_name_latin
+            ? decryptRSA(privateKey, row.encrypted_holder_name_latin)
+            : '';
+          const documentNumber = decryptRSA(privateKey, row.encrypted_document_number);
+          const issueDate = row.encrypted_issue_date
+            ? decryptRSA(privateKey, row.encrypted_issue_date)
+            : '';
+          const expiryDate = row.encrypted_expiry_date
+            ? decryptRSA(privateKey, row.encrypted_expiry_date)
+            : '';
+          const issuePlace = row.encrypted_issue_place
+            ? decryptRSA(privateKey, row.encrypted_issue_place)
+            : '';
+          res.json({
+            id: row.id,
+            document_type: row.document_type,
+            holder_name: holderName,
+            holder_name_latin: holderNameLatin,
+            document_number: documentNumber,
+            issue_date: issueDate,
+            expiry_date: expiryDate,
+            expiry_date_permanent: row.expiry_date_permanent || 0,
+            expiry_date_format: row.expiry_date_format || 'YMD',
+            issue_place: issuePlace,
+            note: row.note || '',
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+          });
+        } catch (e) {
+          return res.status(500).json({ message: '解密失败' });
+        }
+      });
+    }
+  );
+});
+
+// Create new document (no 2FA required for creation)
+app.post('/documents', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  const {
+    documentType,
+    holderName,
+    holderNameLatin,
+    documentNumber,
+    issueDate,
+    expiryDate,
+    expiryDatePermanent,
+    expiryDateFormat,
+    issuePlace,
+    note,
+  } = req.body;
+  if (!documentType || !holderName || !documentNumber) {
+    return res.status(400).json({ message: '证件类型、持有人姓名和证件号码为必填项' });
+  }
+  if (!expiryDatePermanent && !expiryDate) {
+    return res.status(400).json({ message: '必须提供有效期或选择长期' });
+  }
+  const validTypes = ['passport', 'id_card', 'travel_permit', 'drivers_license'];
+  if (!validTypes.includes(documentType)) {
+    return res.status(400).json({ message: '无效的证件类型' });
+  }
+  const validFormats = ['YMD', 'MDY', 'DMY'];
+  const format = expiryDateFormat || 'YMD';
+  if (!validFormats.includes(format)) {
+    return res.status(400).json({ message: '无效的日期格式' });
+  }
+  db.get('SELECT rsa_public_key FROM users WHERE id = ?', [userId], (userErr, user) => {
+    if (userErr || !user || !user.rsa_public_key) {
+      return res.status(500).json({ message: '无法获取加密密钥' });
+    }
+    try {
+      const publicKey = user.rsa_public_key;
+      const encryptedHolderName = encryptRSA(publicKey, String(holderName).trim());
+      const encryptedHolderNameLatin = holderNameLatin
+        ? encryptRSA(publicKey, String(holderNameLatin).trim())
+        : null;
+      const encryptedDocumentNumber = encryptRSA(publicKey, String(documentNumber).trim());
+      const encryptedIssueDate = issueDate ? encryptRSA(publicKey, String(issueDate).trim()) : null;
+      const encryptedExpiryDate = expiryDatePermanent ? null : (expiryDate ? encryptRSA(publicKey, String(expiryDate).trim()) : null);
+      const encryptedIssuePlace = issuePlace ? encryptRSA(publicKey, String(issuePlace).trim()) : null;
+      const noteValue = note ? String(note).trim().slice(0, 500) : '';
+      const isPermanent = expiryDatePermanent ? 1 : 0;
+      db.run(
+        `INSERT INTO documents (
+          user_id, document_type, encrypted_holder_name, encrypted_holder_name_latin,
+          encrypted_document_number, encrypted_issue_date, encrypted_expiry_date,
+          expiry_date_permanent, encrypted_issue_place, expiry_date_format, note, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          userId,
+          documentType,
+          encryptedHolderName,
+          encryptedHolderNameLatin,
+          encryptedDocumentNumber,
+          encryptedIssueDate,
+          encryptedExpiryDate,
+          isPermanent,
+          encryptedIssuePlace,
+          format,
+          noteValue,
+        ],
+        function (insertErr) {
+          if (insertErr) return res.status(500).json({ message: '创建证件失败' });
+          res.json({ message: '证件创建成功', id: this.lastID });
+        }
+      );
+    } catch (e) {
+      return res.status(500).json({ message: '加密失败' });
+    }
+  });
+});
+
+// Update document (requires 2FA)
+app.put('/documents/:id', authenticateToken, require2FA, (req, res) => {
+  const userId = req.user.id;
+  const id = req.params.id;
+  const {
+    holderName,
+    holderNameLatin,
+    documentNumber,
+    issueDate,
+    expiryDate,
+    expiryDatePermanent,
+    expiryDateFormat,
+    issuePlace,
+    note,
+  } = req.body;
+  db.get('SELECT id FROM documents WHERE id = ? AND user_id = ?', [id, userId], (err, row) => {
+    if (err || !row) return res.status(404).json({ message: '未找到该证件' });
+    db.get('SELECT rsa_public_key FROM users WHERE id = ?', [userId], (userErr, user) => {
+      if (userErr || !user || !user.rsa_public_key) {
+        return res.status(500).json({ message: '无法获取加密密钥' });
+      }
+      try {
+        const publicKey = user.rsa_public_key;
+        const sets = [];
+        const params = [];
+        if (holderName) {
+          sets.push('encrypted_holder_name = ?');
+          params.push(encryptRSA(publicKey, String(holderName).trim()));
+        }
+        if (holderNameLatin !== undefined) {
+          sets.push('encrypted_holder_name_latin = ?');
+          params.push(holderNameLatin ? encryptRSA(publicKey, String(holderNameLatin).trim()) : null);
+        }
+        if (documentNumber) {
+          sets.push('encrypted_document_number = ?');
+          params.push(encryptRSA(publicKey, String(documentNumber).trim()));
+        }
+        if (issueDate !== undefined) {
+          sets.push('encrypted_issue_date = ?');
+          params.push(issueDate ? encryptRSA(publicKey, String(issueDate).trim()) : null);
+        }
+        if (expiryDate !== undefined) {
+          sets.push('encrypted_expiry_date = ?');
+          params.push(expiryDate ? encryptRSA(publicKey, String(expiryDate).trim()) : null);
+        }
+        if (expiryDatePermanent !== undefined) {
+          sets.push('expiry_date_permanent = ?');
+          params.push(expiryDatePermanent ? 1 : 0);
+        }
+        if (expiryDateFormat) {
+          const validFormats = ['YMD', 'MDY', 'DMY'];
+          if (!validFormats.includes(expiryDateFormat)) {
+            return res.status(400).json({ message: '无效的日期格式' });
+          }
+          sets.push('expiry_date_format = ?');
+          params.push(expiryDateFormat);
+        }
+        if (issuePlace !== undefined) {
+          sets.push('encrypted_issue_place = ?');
+          params.push(issuePlace ? encryptRSA(publicKey, String(issuePlace).trim()) : null);
+        }
+        if (note !== undefined) {
+          sets.push('note = ?');
+          params.push(note ? String(note).trim().slice(0, 500) : '');
+        }
+        if (sets.length === 0) {
+          return res.status(400).json({ message: '无可更新字段' });
+        }
+        sets.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(id, userId);
+        db.run(
+          `UPDATE documents SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`,
+          params,
+          function (updateErr) {
+            if (updateErr) return res.status(500).json({ message: '更新失败' });
+            res.json({ message: '更新成功' });
+          }
+        );
+      } catch (e) {
+        return res.status(500).json({ message: '加密失败' });
+      }
+    });
+  });
+});
+
+// Delete document (requires 2FA)
+app.delete('/documents/:id', authenticateToken, require2FA, (req, res) => {
+  const userId = req.user.id;
+  const id = req.params.id;
+  db.run('DELETE FROM documents WHERE id = ? AND user_id = ?', [id, userId], function (err) {
+    if (err) return res.status(500).json({ message: '删除失败' });
+    if (this.changes === 0) return res.status(404).json({ message: '未找到该证件' });
+    res.json({ message: '已删除' });
+  });
+});
+
 // Start the server on port specified via environment or 3000.  The
 // listening callback just logs the address for convenience.
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Credit card manager server running on port ${PORT}`);
+  console.log(`Mode: ${IS_PROD ? 'PRODUCTION' : 'DEVELOPMENT'}`);
 });
